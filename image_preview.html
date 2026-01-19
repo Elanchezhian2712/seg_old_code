@@ -1,0 +1,655 @@
+{% extends "layouts/base.html" %}
+{% load static %}
+
+{% block title %}Image Segmentation{% endblock %}
+{% block sidebar %}{% endblock %}
+
+{% block stylesheets %}
+<link rel="stylesheet" href="{% static 'css/imagepreview.css' %}" />
+{% endblock %}
+
+{% block content %}
+<div class="workspace-container">
+
+  <!-- LEFT SIDEBAR: TOOLS & ACTIONS -->
+  <div class="custom-sidebar left-sidebar">
+    <!-- <div class="sidebar-header">
+      <h5><i class="bi bi-layers-half me-2"></i> Workspace</h5>
+    </div> -->
+
+    <div class="sidebar-content">
+
+      <!-- LABEL PICKER SECTION -->
+      <!-- <div class="split-panel top-panel d-flex flex-column" style="overflow: hidden; border-bottom: none;">
+        <div class="search-header px-3 pt-3 pb-2 flex-shrink-0">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="text-uppercase small fw-bold text-muted"
+              style="letter-spacing: 0.5px; font-size: 0.7rem;">Label Picker</span>
+          </div>
+
+          <div class="custom-search-box shadow-sm">
+            <i class="bi bi-search"></i>
+            <input type="text" id="datasetSearchInput" placeholder="Filter labels..." onkeyup="filterDatasets()">
+          </div>
+        </div>
+
+        <div class="dataset-list overflow-auto custom-scrollbar pt-1">
+          {% for ds in datasets %}
+          <div class="dataset-item" id="label-{{ ds.id }}" onclick="handleDatasetSelect('{{ ds.id }}')">
+            <span class="color-indicator" style="background-color: {{ ds.color }}"></span>
+            <span class="label-name">{{ ds.name }}</span>
+            <i class="bi bi-chevron-right ms-auto opacity-25 small"></i>
+          </div>
+          {% endfor %}
+        </div>
+      </div> -->
+
+      <!-- TOOLS SECTION -->
+      <div class="split-panel bottom-panel mt-auto">
+        <!-- <div class="px-3 mb-2">
+          <span class="text-uppercase small fw-bold text-muted"
+            style="letter-spacing: 0.5px; font-size: 0.7rem;">Toolbar</span>
+        </div> -->
+
+        <div class="tool-grid">
+          <!-- Navigation -->
+          <button id="btn-select" class="sidebar-btn" onclick="setTool('select')" title="Select (V)"><i
+              class="bi bi-cursor-fill"></i></button>
+          <!-- <button id="btn-magic" class="sidebar-btn" onclick="setTool('magic')" title="AI Auto Segment"><i
+              class="bi bi-magic"></i></button> -->
+          <button class="sidebar-btn" onclick="resetZoom()" title="Fit Screen"><i
+              class="bi bi-arrows-fullscreen"></i></button>
+          <button id="btn-keyboard" class="sidebar-btn" onclick="openShortcutsModal()" title="Shortcuts (K)"><i
+              class="bi bi-keyboard"></i></button>
+
+          <!-- Drawing -->
+          <button id="btn-brush" class="sidebar-btn" onclick="setTool('brush')" title="Brush (B)"><i
+              class="bi bi-brush"></i></button>
+          <button id="btn-paint" class="sidebar-btn" onclick="setTool('paint')" title="Fill (F)"><i
+              class="bi bi-paint-bucket"></i></button>
+          <button id="btn-rect" class="sidebar-btn" onclick="setTool('rect')" title="Square (R)"><i
+              class="bi bi-square"></i></button>
+          <button id="btn-polygon" class="sidebar-btn" onclick="setTool('polygon')" title="Polygon (G)"><i
+              class="bi bi-hexagon"></i></button>
+
+          <!-- Utilities -->
+          <button class="sidebar-btn" onclick="undo()" title="Undo"><i
+              class="bi bi-arrow-counterclockwise"></i></button>
+          <button class="sidebar-btn" onclick="redo()" title="Redo"><i class="bi bi-arrow-clockwise"></i></button>
+          <button id="btn-eraser" class="sidebar-btn" onclick="setTool('eraser')" title="Eraser (E)"><i
+              class="bi bi-eraser-fill"></i></button>
+          <button class="sidebar-btn text-danger" onclick="deleteSelected()" title="Delete"><i
+              class="bi bi-trash"></i></button>
+        </div>
+
+        <!-- PREMIUM TIMER WIDGET -->
+        <div class="timer-widget">
+          <div class="d-flex align-items-center mb-1">
+            <div class="spinner-grow spinner-grow-sm text-success me-2" role="status" style="width: 8px; height: 8px;">
+            </div>
+            <span id="saveStatus">Live Session</span>
+          </div>
+          <span id="taskTimer" class="font-monospace">00:00:00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: CANVAS -->
+  <div class="center-viewport">
+    <div id="canvasContainer">
+      <div id="canvasWrapper">
+        <canvas id="imageCanvas"></canvas>
+        <canvas id="fabricCanvas"></canvas>
+
+        <div id="floating-annotation-label"></div>
+        <div id="magicFeedbackWidget" class="magic-feedback-widget">
+          <div class="label-badge">
+            <i class="bi bi-magic"></i> <span id="magicLabelName">Car</span>
+          </div>
+          <button class="magic-action-btn btn-magic-accept" onclick="acceptMagicResult()" title="Accept (Enter)">
+            <i class="bi bi-check-lg"></i>
+          </button>
+          <button class="magic-action-btn btn-magic-reject" onclick="rejectMagicResult()" title="Discard (Esc)">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <div id="magicLoadingSpinner"
+          style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:1001; text-align:center;">
+          <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status"></div>
+          <div style="color:white; font-weight:600; text-shadow:0 0 4px black; margin-top:10px;">AI Processing...</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div id="magicInstruction" class="magic-instruction-overlay">
+      Draw a box around the object to segment it.
+    </div>
+  </div>
+
+  <!-- RIGHT SIDEBAR: PROPERTIES & SUBMIT -->
+  <div class="custom-sidebar right-sidebar">
+    <div class="sidebar-content d-flex flex-column h-100">
+
+      <!-- HEADER -->
+      <div class="sidebar-header d-flex justify-content-between align-items-center">
+        <span class="small text-muted">Settings</span>
+
+        {% if rework %}
+        <button class="btn btn-danger btn-sm rework-icon-btn-static" onclick="openReworkReasonModal()"
+          title="View rework reason">
+          <i class="bi bi-exclamation-circle"></i>
+        </button>
+        {% endif %}
+
+      </div>
+
+      <!-- PROPERTIES SECTION -->
+      <div class="prop-section">
+        <span class="prop-title">Tool Settings</span>
+
+        <div class="slider-container">
+          <div class="slider-label">
+            <span>Active Opacity</span>
+            <span class="value-badge" id="opacityDisplay">50%</span>
+          </div>
+          <input type="range" min="0" max="1" step="0.1" value="0.5" id="opacitySlider"
+            oninput="setMaskOpacity(this.value)">
+        </div>
+
+        <div class="slider-container">
+          <div class="slider-label">
+            <span>Stroke Width</span>
+            <span class="value-badge" id="brushSizeDisplay">10px</span>
+          </div>
+          <input type="range" min="1" max="50" value="10" id="brushSlider" oninput="setBrushSize(this.value)">
+        </div>
+      </div>
+
+      <!-- LAYERS SECTION -->
+      <div class="prop-section flex-grow-1 d-flex flex-column overflow-hidden">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <span class="prop-title mb-0">Object Layers</span>
+          <span class="badge bg-light text-muted border" style="font-size: 0.6rem;">AUTO-SAVED</span>
+        </div>
+
+        <div id="layerList" class="overflow-auto custom-scrollbar flex-grow-1 p-1">
+          <!-- Empty State Styling -->
+          <div class="text-center py-5 opacity-50">
+            <i class="bi bi-stack h4 d-block mb-2"></i>
+            <span class="small">No shapes drawn yet</span>
+          </div>
+        </div>
+      </div>
+      <!-- FOOTER ACTION -->
+      <div class="submit-container border-top">
+        <button onclick="openRejectModal()" class="btn btn-outline-danger mx-1">
+          Reject
+        </button>
+        <button onclick="submitTask()" class="btn btn-primary mx-1">
+          Submit
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REJECT MODAL -->
+  <div class="modal fade" id="rejectModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title">
+            <i class="bi bi-exclamation-triangle mr-1"></i>
+            Reject Task
+          </h5>
+          <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <label class="font-weight-bold">
+            Rejection Reason <span class="text-danger">*</span>
+          </label>
+          <textarea id="rejectReason" class="form-control" rows="4"
+            placeholder="Explain clearly why this task is rejected..."></textarea>
+
+          <small class="text-muted">
+            This reason will be visible to the person doing rework.
+          </small>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">
+            Cancel
+          </button>
+          <button type="button" class="btn btn-danger" onclick="confirmReject()">
+            <i class="bi bi-x-circle mr-1"></i> Reject Task
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+
+<!-- REJECT MODAL -->
+<div class="modal fade" id="rejectModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">
+          <i class="bi bi-exclamation-triangle mr-1"></i>
+          Reject Task
+        </h5>
+        <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <label class="font-weight-bold">
+          Rejection Reason <span class="text-danger">*</span>
+        </label>
+        <textarea
+          id="rejectReason"
+          class="form-control"
+          rows="4"
+          placeholder="Explain clearly why this task is rejected..."
+        ></textarea>
+
+        <small class="text-muted">
+          This reason will be visible to the person doing rework.
+        </small>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">
+          Cancel
+        </button>
+        <button type="button" class="btn btn-danger" onclick="confirmReject()">
+          <i class="bi bi-x-circle mr-1"></i> Reject Task
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- Keyboard Shortcuts Modal -->
+<div class="modal fade" id="shortcutsModal" tabindex="-1" role="dialog" aria-labelledby="shortcutsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-light">
+        <h5 class="modal-title" id="shortcutsModalLabel">
+          <i class="bi bi-keyboard mr-2"></i> Keyboard Shortcuts
+        </h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <div class="col-6">
+            <h6 class="font-weight-bold border-bottom pb-1 text-primary">Tools</h6>
+            <ul class="list-unstyled small">
+              <li class="mb-2"><kbd>V</kbd> Select Tool</li>
+              <li class="mb-2"><kbd>B</kbd> Brush Tool</li>
+              <li class="mb-2"><kbd>E</kbd> Eraser Tool</li>
+              <li class="mb-2"><kbd>R</kbd> Rectangle Tool</li>
+              <li class="mb-2"><kbd>C</kbd> Circle Tool</li>
+              <li class="mb-2"><kbd>G</kbd> Polygon Tool</li>
+            </ul>
+          </div>
+          <div class="col-6">
+            <h6 class="font-weight-bold border-bottom pb-1 text-primary">Actions</h6>
+            <ul class="list-unstyled small">
+              <li class="mb-2"><kbd>Z</kbd> Undo</li>
+              <li class="mb-2"><kbd>Y</kbd> Redo</li>
+              <li class="mb-2"><kbd>S</kbd> Save Progress</li>
+              <li class="mb-2"><kbd>Del</kbd> Delete Selected</li>
+              <li class="mb-2"><kbd>Enter</kbd> Finish Polygon</li>
+              <li class="mb-2"><kbd>Shift</kbd> + Drag (Brush) Straight Line</li>
+            </ul>
+          </div>
+        </div>
+        <div class="mt-3 pt-2 border-top">
+          <h6 class="font-weight-bold">Navigation & Help</h6>
+          <ul class="list-unstyled small">
+            <li class="mb-1"><kbd>Alt</kbd> + Drag to Pan</li>
+            <li class="mb-1"><kbd>Wheel</kbd> Zoom In/Out</li>
+            <li class="mb-1"><kbd>K</kbd> Show this help</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Attribute Selection Modal -->
+<div class="modal fade" id="attributeSelectionModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
+  <div class="modal-dialog modal-sm modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white py-2">
+        <h6 class="modal-title" id="attrModalTitle">Select Attributes</h6>
+      </div>
+      <div class="modal-body py-3">
+        <form id="attributeForm">
+          <div id="attributeFormFields"></div>
+        </form>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="useParentDirectly()">Use Parent Only</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="confirmAttributes()">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+
+    window.AVAILABLE_DATASETS = JSON.parse('{{ datasets_json|escapejs }}');
+
+    window.SEGMENTATION_CONFIG = {
+    imageUrl: "{{ image.image_url }}",
+    taskId: "{{ qa_task.id }}",
+    batchId: "{{ qa_task.batch.id }}",  
+    startTime: "{{ qa_task.start_time|date:'c' }}",
+    savedState: {% if saved_annotation %}
+        JSON.parse('{{ saved_annotation|safe }}')
+    {% else %}
+        null
+    {% endif %},
+    mode: "QA"
+  };
+
+  let pendingDataset = null;
+
+  function handleDatasetSelect(id) {
+      const ds = AVAILABLE_DATASETS.find(d => d.id == id);
+      if (!ds) return;
+
+      if (ds.attributes && ds.attributes.length > 0) {
+          openAttributeModal(ds);
+      } else {
+          setCurrentLabel(ds.label_name, ds.color, ds.id, {});
+      }
+  }
+
+  function useParentDirectly() {
+    if (!pendingDataset) return;
+      
+      setCurrentLabel(
+          pendingDataset.label_name, 
+          pendingDataset.color, 
+          pendingDataset.id, 
+          {} 
+      );
+      
+      $('#attributeSelectionModal').modal('hide');
+      pendingDataset = null;
+  }
+
+  function openAttributeModal(dataset) {
+    pendingDataset = dataset; 
+    
+    const container = document.getElementById('attributeFormFields');
+    document.getElementById('attrModalTitle').innerText = `${dataset.label_name} Details`;
+    container.innerHTML = ''; 
+
+    dataset.attributes.forEach(attr => {
+      let inputHtml = '';
+      
+      if (attr.options && attr.options.length > 0) {
+        let optionsHtml = attr.options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+        inputHtml = `
+          <select class="form-control form-control-sm attr-input" data-name="${attr.name}">
+            <option value="">-- Choose --</option>
+            ${optionsHtml}
+          </select>`;
+      } else {
+        inputHtml = `<input type="text" class="form-control form-control-sm attr-input" data-name="${attr.name}" placeholder="Value...">`;
+      }
+
+      const fieldHtml = `
+        <div class="mb-3">
+          <label class="small font-weight-bold text-muted mb-1">${attr.name}</label>
+          ${inputHtml}
+        </div>
+      `;
+      container.insertAdjacentHTML('beforeend', fieldHtml);
+    });
+
+    $('#attributeSelectionModal').modal('show');
+  }
+  function confirmAttributes() {
+    if (!pendingDataset) return;
+
+    const attributes = {};
+    let selectedSubLabelName = "";
+
+    document.querySelectorAll('.attr-input').forEach(input => {
+        const name = input.getAttribute('data-name');
+        const value = input.value;
+        if (value) {
+            attributes[name] = value;
+            if (name === "Select Type") {
+                selectedSubLabelName = value; 
+            }
+        }
+    });
+
+    let finalName = pendingDataset.label_name;
+    let finalColor = pendingDataset.color;
+    let finalId = pendingDataset.id;
+
+    if (selectedSubLabelName) {
+        const typeAttr = pendingDataset.attributes.find(a => a.name === "Select Type");
+        
+        if (typeAttr && typeAttr.sub_labels) {
+            const childData = typeAttr.sub_labels.find(sl => sl.name === selectedSubLabelName);
+            if (childData) {
+                finalName = childData.name;   
+                finalColor = childData.color; 
+                console.log("Found Child Color:", finalColor);
+            }
+        }
+    }
+
+    setCurrentLabel(finalName, finalColor, finalId, attributes);
+    
+    $('#attributeSelectionModal').modal('hide');
+    pendingDataset = null;
+}
+
+  function setCurrentLabel(name, color, id, attributes = {}) {
+    document.querySelectorAll('.dataset-item').forEach(el => el.classList.remove('active'));
+    const activeEl = document.getElementById('label-' + id);
+    if(activeEl) activeEl.classList.add('active');
+
+    window.CURRENT_LABEL = { 
+      name: name,   
+      color: color, 
+      id: id,
+      attributes: attributes 
+    };
+
+    console.log("Active Label Set:", window.CURRENT_LABEL);
+
+    if (window.updateBrushColor) {
+      window.updateBrushColor(color);
+    }
+    
+    if (window.segmentationCanvas) {
+        const activeObj = window.segmentationCanvas.getActiveObject();
+        if (activeObj) {
+            activeObj.set({
+                labelName: name,
+                labelColor: color,
+                datasetId: id,
+                attributes: attributes
+            });
+            window.segmentationCanvas.requestRenderAll();
+            if (window.updateLayerList) window.updateLayerList();
+        }
+    }
+}
+  
+</script>
+{% endblock %}
+
+{% block javascripts %}
+<script src="{% static 'js/fabric/fabric.min.js' %}"></script>
+<script src="{% static 'js/qa_prodution/segmentation_tool.js' %}"></script>
+
+
+<script>
+
+  window.IS_MODAL_OPEN = false;
+
+  document.addEventListener('shown.bs.modal', () => {
+    window.IS_MODAL_OPEN = true;
+  });
+
+  document.addEventListener('hidden.bs.modal', () => {
+    window.IS_MODAL_OPEN = false;
+  });
+
+
+  function openRejectModal() {
+    const modal = new bootstrap.Modal(
+        document.getElementById('rejectModal')
+    );
+    modal.show();
+}
+
+function confirmReject() {
+    const reason = document.getElementById('rejectReason').value.trim();
+
+    if (!reason) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Rejection reason required',
+            text: 'Please explain why this task is being rejected.'
+        });
+        return;
+    }
+
+    Swal.fire({
+        title: 'Confirm Rejection?',
+        text: 'This task will be sent for rework.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc3545',
+        confirmButtonText: 'Yes, Reject'
+    }).then(result => {
+        if (!result.isConfirmed) return;
+
+        rejectTask(reason);
+    });
+}
+
+function rejectTask(reason) {
+  const taskId = window.SEGMENTATION_CONFIG.taskId;
+    fetch(`/api/review/task/${taskId}/reject/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken()
+        },
+        body: JSON.stringify({
+            reason: reason,
+            stage: "QA"
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'success') {
+            Swal.fire({
+                icon: 'success',
+                title: 'Rejected',
+                text: 'Task sent for rework.',
+                timer: 1200,
+                showConfirmButton: false
+            }).then(() => {
+                notifyQaTaskCompleted(taskId, "REJECTED"); 
+                window.close(); 
+            });
+        } else {
+            throw new Error(data.message);
+        }
+    })
+    .catch(err => {
+        Swal.fire({
+            icon: 'error',
+            title: 'Rejection failed',
+            text: err.message || 'Something went wrong.'
+        });
+    });
+}
+
+function openShortcutsModal() {
+  $('#shortcutsModal').modal('show');
+}
+
+document.addEventListener("keydown", e => {
+    if (window.IS_MODAL_OPEN) return;
+
+    if (["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+
+    const key = e.key.toLowerCase();
+
+    if (key === "v") setTool(tools.SELECT);
+    else if (key === "b") setTool(tools.BRUSH);
+    else if (key === "e") setTool(tools.ERASER);
+    else if (key === "r") setTool(tools.RECT);
+    else if (key === "c") setTool(tools.CIRCLE);
+    else if (key === "g") setTool(tools.POLYGON);
+    
+    else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+    else if (key === "z" && !e.ctrlKey) undo();
+    else if (key === "y" && !e.ctrlKey) redo();
+    else if (key === "s" && !e.ctrlKey) {
+        e.preventDefault();
+        saveMask();
+    }
+    else if (e.key === "Enter" && currentTool === tools.POLYGON) {
+        finishPolygon();
+    }
+    
+    else if (e.key === "k") {
+        openShortcutsModal();
+    }
+});
+
+    function filterDatasets() {
+      const input = document.getElementById('datasetSearchInput');
+      const filter = input.value.toLowerCase().trim();
+      const listItems = document.querySelectorAll('.dataset-item');
+      const noResults = document.getElementById('no-results-msg');
+      let visibleCount = 0;
+
+      listItems.forEach(item => {
+          const labelName = item.querySelector('.label-name').innerText.toLowerCase();
+          
+          if (labelName.includes(filter)) {
+              item.style.display = "flex"; 
+              visibleCount++;
+          } else {
+              item.style.display = "none";
+          }
+      });
+
+      if (visibleCount === 0) {
+          noResults.style.display = "block";
+      } else {
+          noResults.style.display = "none";
+      }
+  }
+</script>
+{% endblock javascripts %}
