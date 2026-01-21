@@ -1,0 +1,2907 @@
+{% extends "layouts/base.html" %}
+{% load static %}
+
+{% block title %}Image Segmentation{% endblock %}
+{% block sidebar %}{% endblock %}
+
+{% block stylesheets %}
+<link rel="stylesheet" href="{% static 'css/imagepreview.css' %}" />
+{% endblock %}
+
+{% block content %}
+<div class="workspace-container">
+
+  <!-- LEFT SIDEBAR: TOOLS & ACTIONS -->
+  <div class="custom-sidebar left-sidebar">
+    <div class="sidebar-header">
+      <h5><i class="bi bi-layers-half me-2"></i> Workspace</h5>
+    </div>
+
+    <div class="sidebar-content">
+
+      <!-- LABEL PICKER SECTION -->
+      <div class="split-panel top-panel d-flex flex-column" style="overflow: hidden; border-bottom: none;">
+        <div class="search-header px-3 pt-3 pb-2 flex-shrink-0">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="text-uppercase small fw-bold text-muted"
+              style="letter-spacing: 0.5px; font-size: 0.7rem;">Label Picker</span>
+          </div>
+
+          <div class="custom-search-box shadow-sm">
+            <i class="bi bi-search"></i>
+            <input type="text" id="datasetSearchInput" placeholder="Filter labels..." onkeyup="filterDatasets()">
+          </div>
+        </div>
+
+        <div class="dataset-list overflow-auto custom-scrollbar pt-1">
+          {% for ds in datasets %}
+          <div class="dataset-item" id="label-{{ ds.id }}" onclick="handleDatasetSelect('{{ ds.id }}')">
+            <span class="color-indicator" style="background-color: {{ ds.color }}"></span>
+            <span class="label-name">{{ ds.name }}</span>
+            <i class="bi bi-chevron-right ms-auto opacity-25 small"></i>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- TOOLS SECTION -->
+      <div class="split-panel bottom-panel mt-auto">
+        <div class="px-3 mb-2">
+          <span class="text-uppercase small fw-bold text-muted"
+            style="letter-spacing: 0.5px; font-size: 0.7rem;">Toolbar</span>
+        </div>
+
+        <div class="tool-grid">
+          <!-- Navigation -->
+          <button id="btn-select" class="sidebar-btn" onclick="setTool('select')" title="Select (V)"><i
+              class="bi bi-cursor-fill"></i></button>
+          <!-- <button id="btn-magic" class="sidebar-btn" onclick="setTool('magic')" title="AI Auto Segment"><i
+              class="bi bi-magic"></i></button> -->
+          <button class="sidebar-btn" onclick="resetZoom()" title="Fit Screen"><i
+              class="bi bi-arrows-fullscreen"></i></button>
+          <button id="btn-keyboard" class="sidebar-btn" onclick="openShortcutsModal()" title="Shortcuts (K)"><i
+              class="bi bi-keyboard"></i></button>
+
+          <!-- Drawing -->
+          <button id="btn-brush" class="sidebar-btn" onclick="setTool('brush')" title="Brush (B)"><i
+              class="bi bi-brush"></i></button>
+          <button id="btn-paint" class="sidebar-btn" onclick="setTool('paint')" title="Fill (F)"><i
+              class="bi bi-paint-bucket"></i></button>
+          <button id="btn-rect" class="sidebar-btn" onclick="setTool('rect')" title="Square (R)"><i
+              class="bi bi-square"></i></button>
+          <button id="btn-polygon" class="sidebar-btn" onclick="setTool('polygon')" title="Polygon (G)"><i
+              class="bi bi-hexagon"></i></button>
+
+          <!-- Utilities -->
+          <button class="sidebar-btn" onclick="undo()" title="Undo"><i
+              class="bi bi-arrow-counterclockwise"></i></button>
+          <button class="sidebar-btn" onclick="redo()" title="Redo"><i class="bi bi-arrow-clockwise"></i></button>
+          <button id="btn-eraser" class="sidebar-btn" onclick="setTool('eraser')" title="Eraser (E)"><i
+              class="bi bi-eraser-fill"></i></button>
+          <button class="sidebar-btn text-danger" onclick="deleteSelected()" title="Delete"><i
+              class="bi bi-trash"></i></button>
+        </div>
+
+        <!-- PREMIUM TIMER WIDGET -->
+        <div class="timer-widget">
+          <div class="d-flex align-items-center mb-1">
+            <div class="spinner-grow spinner-grow-sm text-success me-2" role="status" style="width: 8px; height: 8px;">
+            </div>
+            <span id="saveStatus">Live Session</span>
+          </div>
+          <span id="taskTimer" class="font-monospace">00:00:00</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CENTER: CANVAS -->
+  <div class="center-viewport">
+    <div id="canvasContainer">
+      <div id="canvasWrapper">
+        <canvas id="imageCanvas"></canvas>
+        <canvas id="fabricCanvas"></canvas>
+
+        <div id="floating-annotation-label"></div>
+        <div id="magicFeedbackWidget" class="magic-feedback-widget">
+          <div class="label-badge">
+            <i class="bi bi-magic"></i> <span id="magicLabelName">Car</span>
+          </div>
+          <button class="magic-action-btn btn-magic-accept" onclick="acceptMagicResult()" title="Accept (Enter)">
+            <i class="bi bi-check-lg"></i>
+          </button>
+          <button class="magic-action-btn btn-magic-reject" onclick="rejectMagicResult()" title="Discard (Esc)">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <div id="magicLoadingSpinner"
+          style="display:none; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); z-index:1001; text-align:center;">
+          <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status"></div>
+          <div style="color:white; font-weight:600; text-shadow:0 0 4px black; margin-top:10px;">AI Processing...</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div id="magicInstruction" class="magic-instruction-overlay">
+      Draw a box around the object to segment it.
+    </div>
+  </div>
+
+  <!-- RIGHT SIDEBAR: PROPERTIES & SUBMIT -->
+  <div class="custom-sidebar right-sidebar">
+    <div class="sidebar-content d-flex flex-column h-100">
+
+      <!-- HEADER -->
+      <div class="sidebar-header d-flex justify-content-between align-items-center">
+        <span class="small text-muted">Settings</span>
+
+        {% if rework %}
+        <button class="btn btn-danger btn-sm rework-icon-btn-static" onclick="openReworkReasonModal()"
+          title="View rework reason">
+          <i class="bi bi-exclamation-circle"></i>
+        </button>
+        {% endif %}
+
+      </div>
+
+      <!-- PROPERTIES SECTION -->
+      <div class="prop-section">
+        <span class="prop-title">Tool Settings</span>
+
+        <div class="slider-container">
+          <div class="slider-label">
+            <span>Active Opacity</span>
+            <span class="value-badge" id="opacityDisplay">50%</span>
+          </div>
+          <input type="range" min="0" max="1" step="0.1" value="0.5" id="opacitySlider"
+            oninput="setMaskOpacity(this.value)">
+        </div>
+
+        <div class="slider-container">
+          <div class="slider-label">
+            <span>Stroke Width</span>
+            <span class="value-badge" id="brushSizeDisplay">10px</span>
+          </div>
+          <input type="range" min="1" max="50" value="10" id="brushSlider" oninput="setBrushSize(this.value)">
+        </div>
+      </div>
+
+      <!-- LAYERS SECTION -->
+      <div class="prop-section flex-grow-1 d-flex flex-column overflow-hidden">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <span class="prop-title mb-0">Object Layers</span>
+          <span class="badge bg-light text-muted border" style="font-size: 0.6rem;">AUTO-SAVED</span>
+        </div>
+
+        <div id="layerList" class="overflow-auto custom-scrollbar flex-grow-1 p-1">
+          <!-- Empty State Styling -->
+          <div class="text-center py-5 opacity-50">
+            <i class="bi bi-stack h4 d-block mb-2"></i>
+            <span class="small">No shapes drawn yet</span>
+          </div>
+        </div>
+      </div>
+      <!-- FOOTER ACTION -->
+      <div class="submit-container border-top">
+        <button onclick="openRejectModal()" class="btn btn-outline-danger mx-1">
+          Reject
+        </button>
+        <button onclick="submitTask()" class="btn btn-primary mx-1">
+          Approve
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REJECT MODAL -->
+  <div class="modal fade" id="rejectModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+
+        <div class="modal-header bg-danger text-white">
+          <h5 class="modal-title">
+            <i class="bi bi-exclamation-triangle mr-1"></i>
+            Reject Task
+          </h5>
+          <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <label class="font-weight-bold">
+            Rejection Reason <span class="text-danger">*</span>
+          </label>
+          <textarea id="rejectReason" class="form-control" rows="4"
+            placeholder="Explain clearly why this task is rejected..."></textarea>
+
+          <small class="text-muted">
+            This reason will be visible to the person doing rework.
+          </small>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">
+            Cancel
+          </button>
+          <button type="button" class="btn btn-danger" onclick="confirmReject()">
+            <i class="bi bi-x-circle mr-1"></i> Reject Task
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+
+<!-- REJECT MODAL -->
+<div class="modal fade" id="rejectModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">
+          <i class="bi bi-exclamation-triangle mr-1"></i>
+          Reject Task
+        </h5>
+        <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <label class="font-weight-bold">
+          Rejection Reason <span class="text-danger">*</span>
+        </label>
+        <textarea
+          id="rejectReason"
+          class="form-control"
+          rows="4"
+          placeholder="Explain clearly why this task is rejected..."
+        ></textarea>
+
+        <small class="text-muted">
+          This reason will be visible to the person doing rework.
+        </small>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">
+          Cancel
+        </button>
+        <button type="button" class="btn btn-danger" onclick="confirmReject()">
+          <i class="bi bi-x-circle mr-1"></i> Reject Task
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- Keyboard Shortcuts Modal -->
+<div class="modal fade" id="shortcutsModal" tabindex="-1" role="dialog" aria-labelledby="shortcutsModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-light">
+        <h5 class="modal-title" id="shortcutsModalLabel">
+          <i class="bi bi-keyboard mr-2"></i> Keyboard Shortcuts
+        </h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <div class="col-6">
+            <h6 class="font-weight-bold border-bottom pb-1 text-primary">Tools</h6>
+            <ul class="list-unstyled small">
+              <li class="mb-2"><kbd>V</kbd> Select Tool</li>
+              <li class="mb-2"><kbd>B</kbd> Brush Tool</li>
+              <li class="mb-2"><kbd>E</kbd> Eraser Tool</li>
+              <li class="mb-2"><kbd>R</kbd> Rectangle Tool</li>
+              <li class="mb-2"><kbd>C</kbd> Circle Tool</li>
+              <li class="mb-2"><kbd>G</kbd> Polygon Tool</li>
+            </ul>
+          </div>
+          <div class="col-6">
+            <h6 class="font-weight-bold border-bottom pb-1 text-primary">Actions</h6>
+            <ul class="list-unstyled small">
+              <li class="mb-2"><kbd>Z</kbd> Undo</li>
+              <li class="mb-2"><kbd>Y</kbd> Redo</li>
+              <li class="mb-2"><kbd>S</kbd> Save Progress</li>
+              <li class="mb-2"><kbd>Del</kbd> Delete Selected</li>
+              <li class="mb-2"><kbd>Enter</kbd> Finish Polygon</li>
+              <li class="mb-2"><kbd>Shift</kbd> + Drag (Brush) Straight Line</li>
+            </ul>
+          </div>
+        </div>
+        <div class="mt-3 pt-2 border-top">
+          <h6 class="font-weight-bold">Navigation & Help</h6>
+          <ul class="list-unstyled small">
+            <li class="mb-1"><kbd>Alt</kbd> + Drag to Pan</li>
+            <li class="mb-1"><kbd>Wheel</kbd> Zoom In/Out</li>
+            <li class="mb-1"><kbd>K</kbd> Show this help</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Attribute Selection Modal -->
+<div class="modal fade" id="attributeSelectionModal" tabindex="-1" role="dialog" data-backdrop="static" data-keyboard="false">
+  <div class="modal-dialog modal-sm modal-dialog-centered" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white py-2">
+        <h6 class="modal-title" id="attrModalTitle">Select Attributes</h6>
+      </div>
+      <div class="modal-body py-3">
+        <form id="attributeForm">
+          <div id="attributeFormFields"></div>
+        </form>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="useParentDirectly()">Use Parent Only</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="confirmAttributes()">Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+
+    window.AVAILABLE_DATASETS = JSON.parse('{{ datasets_json|escapejs }}');
+
+    window.SEGMENTATION_CONFIG = {
+    imageUrl: "{{ image.image_url }}",
+    taskId: "{{ qa_task.id }}",
+    batchId: "{{ qa_task.batch.id }}",  
+    startTime: "{{ qa_task.start_time|date:'c' }}",
+    savedState: {% if saved_annotation %}
+        JSON.parse('{{ saved_annotation|safe }}')
+    {% else %}
+        null
+    {% endif %},
+    mode: "QA"
+  };
+
+  let pendingDataset = null;
+
+  function handleDatasetSelect(id) {
+      const ds = AVAILABLE_DATASETS.find(d => d.id == id);
+      if (!ds) return;
+
+      if (ds.attributes && ds.attributes.length > 0) {
+          openAttributeModal(ds);
+      } else {
+          setCurrentLabel(ds.label_name, ds.color, ds.id, {});
+      }
+  }
+
+  function useParentDirectly() {
+    if (!pendingDataset) return;
+      
+      setCurrentLabel(
+          pendingDataset.label_name, 
+          pendingDataset.color, 
+          pendingDataset.id, 
+          {} 
+      );
+      
+      $('#attributeSelectionModal').modal('hide');
+      pendingDataset = null;
+  }
+
+  function openAttributeModal(dataset) {
+    pendingDataset = dataset; 
+    
+    const container = document.getElementById('attributeFormFields');
+    document.getElementById('attrModalTitle').innerText = `${dataset.label_name} Details`;
+    container.innerHTML = ''; 
+
+    dataset.attributes.forEach(attr => {
+      let inputHtml = '';
+      
+      if (attr.options && attr.options.length > 0) {
+        let optionsHtml = attr.options.map(opt => `<option value="${opt}">${opt}</option>`).join('');
+        inputHtml = `
+          <select class="form-control form-control-sm attr-input" data-name="${attr.name}">
+            <option value="">-- Choose --</option>
+            ${optionsHtml}
+          </select>`;
+      } else {
+        inputHtml = `<input type="text" class="form-control form-control-sm attr-input" data-name="${attr.name}" placeholder="Value...">`;
+      }
+
+      const fieldHtml = `
+        <div class="mb-3">
+          <label class="small font-weight-bold text-muted mb-1">${attr.name}</label>
+          ${inputHtml}
+        </div>
+      `;
+      container.insertAdjacentHTML('beforeend', fieldHtml);
+    });
+
+    $('#attributeSelectionModal').modal('show');
+  }
+  function confirmAttributes() {
+    if (!pendingDataset) return;
+
+    const attributes = {};
+    let selectedSubLabelName = "";
+
+    document.querySelectorAll('.attr-input').forEach(input => {
+        const name = input.getAttribute('data-name');
+        const value = input.value;
+        if (value) {
+            attributes[name] = value;
+            if (name === "Select Type") {
+                selectedSubLabelName = value; 
+            }
+        }
+    });
+
+    let finalName = pendingDataset.label_name;
+    let finalColor = pendingDataset.color;
+    let finalId = pendingDataset.id;
+
+    if (selectedSubLabelName) {
+        const typeAttr = pendingDataset.attributes.find(a => a.name === "Select Type");
+        
+        if (typeAttr && typeAttr.sub_labels) {
+            const childData = typeAttr.sub_labels.find(sl => sl.name === selectedSubLabelName);
+            if (childData) {
+                finalName = childData.name;   
+                finalColor = childData.color; 
+                console.log("Found Child Color:", finalColor);
+            }
+        }
+    }
+
+    setCurrentLabel(finalName, finalColor, finalId, attributes);
+    
+    $('#attributeSelectionModal').modal('hide');
+    pendingDataset = null;
+}
+
+  function setCurrentLabel(name, color, id, attributes = {}) {
+    document.querySelectorAll('.dataset-item').forEach(el => el.classList.remove('active'));
+    const activeEl = document.getElementById('label-' + id);
+    if(activeEl) activeEl.classList.add('active');
+
+    window.CURRENT_LABEL = { 
+      name: name,   
+      color: color, 
+      id: id,
+      attributes: attributes 
+    };
+
+    console.log("Active Label Set:", window.CURRENT_LABEL);
+
+    if (window.updateBrushColor) {
+      window.updateBrushColor(color);
+    }
+    
+    if (window.segmentationCanvas) {
+        const activeObj = window.segmentationCanvas.getActiveObject();
+        if (activeObj) {
+            activeObj.set({
+                labelName: name,
+                labelColor: color,
+                datasetId: id,
+                attributes: attributes
+            });
+            window.segmentationCanvas.requestRenderAll();
+            if (window.updateLayerList) window.updateLayerList();
+        }
+    }
+}
+  
+</script>
+{% endblock %}
+
+{% block javascripts %}
+<script src="{% static 'js/fabric/fabric.min.js' %}"></script>
+<script src="{% static 'js/qa_prodution/segmentation_tool.js' %}"></script>
+
+
+<script>
+
+  window.IS_MODAL_OPEN = false;
+
+  document.addEventListener('shown.bs.modal', () => {
+    window.IS_MODAL_OPEN = true;
+  });
+
+  document.addEventListener('hidden.bs.modal', () => {
+    window.IS_MODAL_OPEN = false;
+  });
+
+
+  function openRejectModal() {
+    const modal = new bootstrap.Modal(
+        document.getElementById('rejectModal')
+    );
+    modal.show();
+}
+
+function confirmReject() {
+    const reason = document.getElementById('rejectReason').value.trim();
+
+    if (!reason) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Rejection reason required',
+            text: 'Please explain why this task is being rejected.'
+        });
+        return;
+    }
+
+    Swal.fire({
+        title: 'Confirm Rejection?',
+        text: 'This task will be sent for rework.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#dc3545',
+        confirmButtonText: 'Yes, Reject'
+    }).then(result => {
+        if (!result.isConfirmed) return;
+
+        rejectTask(reason);
+    });
+}
+
+function rejectTask(reason) {
+  const taskId = window.SEGMENTATION_CONFIG.taskId;
+    fetch(`/api/review/task/${taskId}/reject/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken()
+        },
+        body: JSON.stringify({
+            reason: reason,
+            stage: "QA"
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === 'success') {
+            Swal.fire({
+                icon: 'success',
+                title: 'Rejected',
+                text: 'Task sent for rework.',
+                timer: 1200,
+                showConfirmButton: false
+            }).then(() => {
+                notifyQaTaskCompleted(taskId, "REJECTED"); 
+                window.close(); 
+            });
+        } else {
+            throw new Error(data.message);
+        }
+    })
+    .catch(err => {
+        Swal.fire({
+            icon: 'error',
+            title: 'Rejection failed',
+            text: err.message || 'Something went wrong.'
+        });
+    });
+}
+
+function openShortcutsModal() {
+  $('#shortcutsModal').modal('show');
+}
+
+document.addEventListener("keydown", e => {
+    if (window.IS_MODAL_OPEN) return;
+
+    if (["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+
+    const key = e.key.toLowerCase();
+
+    if (key === "v") setTool(tools.SELECT);
+    else if (key === "b") setTool(tools.BRUSH);
+    else if (key === "e") setTool(tools.ERASER);
+    else if (key === "r") setTool(tools.RECT);
+    else if (key === "c") setTool(tools.CIRCLE);
+    else if (key === "g") setTool(tools.POLYGON);
+    
+    else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+    else if (key === "z" && !e.ctrlKey) undo();
+    else if (key === "y" && !e.ctrlKey) redo();
+    else if (key === "s" && !e.ctrlKey) {
+        e.preventDefault();
+        saveMask();
+    }
+    else if (e.key === "Enter" && currentTool === tools.POLYGON) {
+        finishPolygon();
+    }
+    
+    else if (e.key === "k") {
+        openShortcutsModal();
+    }
+});
+
+    function filterDatasets() {
+      const input = document.getElementById('datasetSearchInput');
+      const filter = input.value.toLowerCase().trim();
+      const listItems = document.querySelectorAll('.dataset-item');
+      const noResults = document.getElementById('no-results-msg');
+      let visibleCount = 0;
+
+      listItems.forEach(item => {
+          const labelName = item.querySelector('.label-name').innerText.toLowerCase();
+          
+          if (labelName.includes(filter)) {
+              item.style.display = "flex"; 
+              visibleCount++;
+          } else {
+              item.style.display = "none";
+          }
+      });
+
+      if (visibleCount === 0) {
+          noResults.style.display = "block";
+      } else {
+          noResults.style.display = "none";
+      }
+  }
+</script>
+{% endblock javascripts %}
+
+-------------------------------------------------------------------------
+
+const imageCanvas = document.getElementById('imageCanvas');
+const imgCtx = imageCanvas ? imageCanvas.getContext('2d') : null;
+
+const canvas = new fabric.Canvas('fabricCanvas', {
+    isDrawingMode: false,
+    selection: true,
+    backgroundColor: 'transparent',
+    preserveObjectStacking: true
+});
+
+window.segmentationCanvas = canvas;
+
+function getCurrentLabelData() {
+    if (!window.CURRENT_LABEL) return null;
+    return {
+        name: window.CURRENT_LABEL.name,
+        color: window.CURRENT_LABEL.color,
+        id: window.CURRENT_LABEL.id,
+        attributes: window.CURRENT_LABEL.attributes || {}
+    };
+}
+
+canvas.on('mouse:down', function (opt) {
+    const pointer = canvas.getPointer(opt.e);
+
+    if ((currentTool === tools.BRUSH || currentTool === tools.ERASER) && opt.e.shiftKey && lastBrushPos) {
+        
+        canvas.isDrawingMode = false;
+
+        let strokeColor, strokeWidth;
+        
+        if (currentTool === tools.ERASER) {
+            strokeColor = 'white'; 
+            strokeWidth = brushSize; 
+        } else {
+            const rgb = hexToRgb(window.CURRENT_LABEL.color);
+            strokeColor = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+            strokeWidth = brushSize;
+        }
+
+        const pathData = `M ${lastBrushPos.x} ${lastBrushPos.y} L ${pointer.x} ${pointer.y}`;
+        const straightPath = new fabric.Path(pathData, {
+            fill: null,
+            stroke: strokeColor,
+            strokeWidth: strokeWidth,
+            strokeLineCap: 'round', 
+            strokeLineJoin: 'round',
+            selectable: false,
+            evented: false
+        });
+
+        canvas.add(straightPath);
+
+        canvas.fire('path:created', { path: straightPath });
+
+        lastBrushPos = { x: pointer.x, y: pointer.y };
+
+        setTimeout(() => {
+            canvas.isDrawingMode = true;
+        }, 50);
+
+        return; 
+    }
+
+    if (!pointer || typeof pointer.x !== 'number' || typeof pointer.y !== 'number') {
+        console.error('Invalid pointer coordinates:', pointer);
+        return;
+    }
+
+    const clickX = Math.round(pointer.x);
+    const clickY = Math.round(pointer.y);
+
+    if (!isFinite(clickX) || !isFinite(clickY)) {
+        console.error('Coordinates are NaN or Infinity:', clickX, clickY);
+        return;
+    }
+
+    if (currentTool === tools.MAGIC) {
+        if (!window.CURRENT_LABEL) {
+            Swal.fire({
+                title: 'No Label Selected',
+                text: 'Please select a label from the dataset list first!',
+                icon: 'warning',
+                confirmButtonColor: '#4b49ac'
+            });
+            setTool(tools.SELECT);
+            return;
+        }
+
+        console.log(`Magic Click at -> X: ${clickX}, Y: ${clickY}`);
+        runSAMMagic(clickX, clickY);
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+        return; 
+    }
+
+    const objects = canvas.getObjects();
+    objects.forEach((obj, i) => {
+        if (obj.type !== 'image') {
+            const right = obj.left + (obj.width || obj.rx * 2);
+            const bottom = obj.top + (obj.height || obj.ry * 2);
+            const inside = clickX >= obj.left && clickX <= right &&
+                clickY >= obj.top && clickY <= bottom;
+            if (inside) console.log(`Clicked on object: ${obj.type}`);
+        }
+    });
+    
+    shapeDrawingMouseDown(opt);
+});
+
+/* ------------------------------
+   STATE MANAGEMENT
+------------------------------ */
+const tools = {
+    SELECT: "select",
+    BRUSH: "brush",
+    ERASER: "eraser",
+    RECT: "rect",
+    CIRCLE: "circle",
+    POLYGON: "polygon",
+    PAINT: "paint"
+};
+
+let currentTool = tools.SELECT;
+let brushSize = 10;
+let maskOpacity = 0.5;
+let currentZoom = 1.0;
+let originalWidth = 0;
+let originalHeight = 0;
+
+// Pan/Drag state for zoomed canvas
+let isPanning = false;
+let lastPanX = 0;
+let lastPanY = 0;
+
+// Undo/Redo stacks
+let historyStack = [];
+let redoStack = [];
+const MAX_HISTORY = 30;
+
+// Polygon state
+let polygonPoints = [];
+let polygonLineGroup = null;
+let isDrawingPolygon = false;
+
+// Shape drawing state
+let isDrawingShape = false;
+let shapeStartPoint = null;
+let currentShape = null;
+let lastBoundaryObject = null;
+let lastBrushPos = null;
+
+// timer
+let taskTimerInterval = null;
+
+// ai
+tools.MAGIC = "magic";
+
+/* ------------------------------
+   TOOL SELECTION
+------------------------------ */
+function setTool(tool) {
+
+    currentTool = tool;
+    lastBrushPos = null;
+
+    document.querySelectorAll('.sidebar-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.getElementById(`btn-${tool}`)?.classList.add('active');
+
+    if (tool !== tools.POLYGON) {
+        clearPolygon();
+    }
+
+    canvas.isDrawingMode = (tool === tools.BRUSH || tool === tools.ERASER);
+
+    if (tool === tools.MAGIC) {
+        canvas.defaultCursor = 'crosshair';
+        canvas.selection = false;
+        canvas.discardActiveObject();
+    }
+
+    if (tool === tools.SELECT) {
+        canvas.selection = true;
+        canvas.getObjects().forEach((obj) => {
+            const isEraserPath = obj.globalCompositeOperation === 'destination-out';
+
+            if (isEraserPath) {
+                obj.selectable = false;
+                obj.evented = false;
+            } else if (obj.type !== 'image' || obj.isMask) {
+                obj.selectable = true;
+                obj.evented = true;
+                obj.hasControls = true;
+                obj.hasBorders = true;
+                obj.lockMovementX = false;
+                obj.lockMovementY = false;
+            } else {
+                obj.selectable = false;
+                obj.evented = false;
+            }
+        });
+
+
+    } else if (tool === tools.BRUSH) {
+        if (!window.CURRENT_LABEL || !window.CURRENT_LABEL.color) {
+            Swal.fire({
+                title: 'No Label Selected',
+                text: 'Please select a label from the dataset list first!',
+                icon: 'warning',
+                confirmButtonText: 'OK',
+                confirmButtonColor: '#4b49ac'
+            });
+            return;
+        }
+
+        canvas.selection = false;
+
+        const rgb = hexToRgb(window.CURRENT_LABEL.color);
+
+        canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+        canvas.freeDrawingBrush.color = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+        canvas.freeDrawingBrush.width = brushSize;
+        canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
+
+        canvas.discardActiveObject();
+
+        canvas.getObjects().forEach(obj => {
+            obj.selectable = false;
+            obj.evented = false;
+        });
+    }
+    else if (tool === tools.ERASER) {
+        canvas.selection = false;
+
+        canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+        canvas.freeDrawingBrush.width = brushSize;
+        canvas.freeDrawingBrush.color = 'rgba(255, 255, 255, 1)';
+
+        canvas.discardActiveObject();
+
+        canvas.getObjects().forEach(obj => {
+            obj.selectable = false;
+            obj.evented = false;
+        });
+    }
+    else {
+        canvas.selection = false;
+        canvas.discardActiveObject();
+        canvas.getObjects().forEach(obj => {
+            obj.selectable = false;
+            obj.evented = false;
+        });
+    }
+
+    canvas.renderAll();
+}
+
+/* ------------------------------
+   BRUSH SIZE & OPACITY
+------------------------------ */
+let defaultMaskOpacity = 0.5; 
+
+function setBrushSize(size) {
+    brushSize = parseInt(size);
+    document.getElementById('brushSizeDisplay').innerText = brushSize + 'px';
+
+    if (canvas.freeDrawingBrush) {
+        canvas.freeDrawingBrush.width = brushSize;
+    }
+}
+
+function setMaskOpacity(value) {
+    const newOpacity = parseFloat(value);
+    document.getElementById('opacityDisplay').innerText = Math.round(newOpacity * 100) + '%';
+
+    const activeObjects = canvas.getActiveObjects();
+
+    if (activeObjects.length > 0) {
+        activeObjects.forEach(obj => {
+            if (obj.labelName || obj.isMask || obj.isMaskGroup) {
+                obj.set('opacity', newOpacity);
+            }
+        });
+        canvas.requestRenderAll();
+        triggerAutoSave();
+    } else {
+        defaultMaskOpacity = newOpacity;
+    }
+}
+
+function updateOpacitySliderFromSelection() {
+    const activeObjects = canvas.getActiveObjects();
+    const slider = document.getElementById('opacitySlider');
+    
+    if (!slider) return;
+
+    if (activeObjects.length > 0) {
+        const firstObj = activeObjects[0];
+        if (firstObj.labelName || firstObj.isMask || firstObj.isMaskGroup) {
+            const objOpacity = firstObj.opacity || 0.5;
+            slider.value = objOpacity;
+            document.getElementById('opacityDisplay').innerText = Math.round(objOpacity * 100) + '%';
+        }
+    } else {
+        slider.value = defaultMaskOpacity;
+        document.getElementById('opacityDisplay').innerText = Math.round(defaultMaskOpacity * 100) + '%';
+    }
+}
+
+canvas.on('selection:created', updateOpacitySliderFromSelection);
+canvas.on('selection:updated', updateOpacitySliderFromSelection);
+canvas.on('selection:cleared', updateOpacitySliderFromSelection);
+
+
+
+/* ------------------------------
+   ZOOM FUNCTIONS
+------------------------------ */
+function changeZoom(delta) {
+    const newZoom = Math.max(0.1, Math.min(30.0, currentZoom + delta));
+    applyZoom(newZoom, null); 
+}
+
+function resetZoom() {
+    const container = document.getElementById('canvasContainer');
+    if (!container || !originalWidth || !originalHeight) {
+        applyZoom(1.0);
+        return;
+    }
+
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+
+    const scaleX = containerWidth / originalWidth;
+    const scaleY = containerHeight / originalHeight;
+
+    let zoomLevel = Math.min(scaleX, scaleY) * 0.9;
+    applyZoom(zoomLevel);
+}
+
+function applyZoom(zoomLevel, mousePoint = null) {
+    const container = document.getElementById('canvasContainer');
+    if (!container || !originalWidth || !originalHeight) return;
+
+    const oldZoom = currentZoom;
+    
+    currentZoom = zoomLevel;
+
+    const scaleRatio = currentZoom / oldZoom;
+
+    let focusX, focusY;
+    
+    if (mousePoint) {
+        focusX = mousePoint.x;
+        focusY = mousePoint.y;
+    } else {
+        focusX = container.clientWidth / 2;
+        focusY = container.clientHeight / 2;
+    }
+
+    const absoluteX = container.scrollLeft + focusX;
+    const absoluteY = container.scrollTop + focusY;
+
+    const newWidth = originalWidth * currentZoom;
+    const newHeight = originalHeight * currentZoom;
+
+    const zoomDisplay = document.getElementById("zoomDisplay");
+    if (zoomDisplay) {
+        zoomDisplay.innerText = Math.round(currentZoom * 100) + "%";
+    }
+
+    canvas.setZoom(currentZoom);
+    canvas.setWidth(newWidth);
+    canvas.setHeight(newHeight);
+
+    imageCanvas.style.width = newWidth + 'px';
+    imageCanvas.style.height = newHeight + 'px';
+
+    const canvasWrapper = document.getElementById('canvasWrapper');
+    canvasWrapper.style.width = newWidth + 'px';
+    canvasWrapper.style.height = newHeight + 'px';
+    container.scrollLeft = (absoluteX * scaleRatio) - focusX;
+    container.scrollTop = (absoluteY * scaleRatio) - focusY;
+
+    canvas.renderAll();
+}
+
+/* ------------------------------
+   PAN/DRAG FUNCTIONALITY
+------------------------------ */
+let isAltPressed = false;
+
+// Track Alt key for pan mode
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Alt' && e.target.tagName !== 'INPUT' && !isAltPressed) {
+        e.preventDefault();
+        isAltPressed = true;
+        canvas.defaultCursor = 'grab';
+        canvas.hoverCursor = 'grab';
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (e.key === 'Alt') {
+        isAltPressed = false;
+        canvas.defaultCursor = 'default';
+        canvas.hoverCursor = 'move';
+    }
+});
+
+// Pan with mouse drag
+canvas.on('mouse:down', function (opt) {
+    const evt = opt.e;
+
+    if (evt.button === 1 || (isAltPressed && evt.button === 0)) {
+        isPanning = true;
+        lastPanX = evt.clientX;
+        lastPanY = evt.clientY;
+        canvas.defaultCursor = 'grabbing';
+        canvas.selection = false;
+        opt.e.preventDefault();
+    }
+});
+
+canvas.on('mouse:move', function (opt) {
+    if (isPanning) {
+        const evt = opt.e;
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        const container = document.getElementById('canvasContainer');
+
+        if (canvasWrapper && container) {
+            const deltaX = evt.clientX - lastPanX;
+            const deltaY = evt.clientY - lastPanY;
+
+            container.scrollLeft -= deltaX;
+            container.scrollTop -= deltaY;
+
+            lastPanX = evt.clientX;
+            lastPanY = evt.clientY;
+        }
+
+        opt.e.preventDefault();
+        opt.e.stopPropagation();
+    }
+});
+
+canvas.on('mouse:up', function(opt) {
+    if (isPanning) {
+        isPanning = false;
+        canvas.defaultCursor = isAltPressed ? 'grab' : 'default';
+        canvas.selection = currentTool === tools.SELECT;
+        return; 
+    }
+
+    if (currentTool === tools.BRUSH || currentTool === tools.ERASER) {
+        const pointer = canvas.getPointer(opt.e);
+        lastBrushPos = { x: pointer.x, y: pointer.y };
+    }
+
+    shapeDrawingMouseUp(opt); 
+});
+
+canvas.on('mouse:wheel', function (opt) {
+    const delta = opt.e.deltaY;
+    let zoom = canvas.getZoom();
+    zoom *= 0.999 ** delta;
+
+    if (zoom > 30) zoom = 30;
+    if (zoom < 0.1) zoom = 0.1;
+
+    const container = document.getElementById('canvasContainer');
+    const rect = container.getBoundingClientRect();
+
+    const mousePoint = {
+        x: opt.e.clientX - rect.left,
+        y: opt.e.clientY - rect.top
+    };
+
+    applyZoom(zoom, mousePoint);
+
+    opt.e.preventDefault();
+    opt.e.stopPropagation();
+});
+
+/* ------------------------------
+   SHAPE DRAWING (RECT, CIRCLE) 
+------------------------------ */
+let shapeDrawingMouseDown, shapeDrawingMouseMove, shapeDrawingMouseUp;
+
+shapeDrawingMouseDown = function (options) {
+
+    if (currentTool === tools.BRUSH || currentTool === tools.ERASER || currentTool === tools.MAGIC) {
+        saveState();
+        return;
+    }
+
+    if (currentTool === tools.SELECT) {
+        return;
+    }
+
+    if (currentTool === tools.POLYGON) {
+        handlePolygonClick(options);
+        return;
+    }
+
+    if (currentTool === tools.RECT || currentTool === tools.CIRCLE) {
+
+        const label = getCurrentLabelData();
+
+        if (!label) {
+            Swal.fire({
+                title: 'No Label Selected',
+                text: 'Please select a label from the dataset list first!',
+                icon: 'warning',
+                confirmButtonText: 'OK',
+                confirmButtonColor: '#4b49ac'
+            });
+            return;
+        }
+
+        isDrawingShape = true;
+        const pointer = canvas.getPointer(options.e);
+        shapeStartPoint = pointer;
+
+        saveState();
+
+        const commonProps = {
+            left: pointer.x,
+            top: pointer.y,
+            fill: label.color,
+            stroke: label.color,
+            strokeWidth: 1,
+            selectable: false,
+            evented: false,
+            opacity: defaultMaskOpacity, 
+            erasable: true,
+            labelName: label.name,
+            labelColor: label.color,
+            datasetId: label.id,          
+            attributes: label.attributes 
+        };
+
+        if (currentTool === tools.RECT) {
+            currentShape = new fabric.Rect({
+                ...commonProps,
+                width: 0,
+                height: 0
+            });
+        } else if (currentTool === tools.CIRCLE) {
+            currentShape = new fabric.Ellipse({
+                ...commonProps,
+                rx: 0,
+                ry: 0
+            });
+        }
+        canvas.add(currentShape);
+        canvas.renderAll();
+    }
+};
+
+shapeDrawingMouseMove = function (options) {
+    if (currentTool === tools.SELECT) {
+        return;
+    }
+
+    if (!isDrawingShape || !currentShape) return;
+
+    const pointer = canvas.getPointer(options.e);
+
+    if (currentTool === tools.RECT) {
+        const width = pointer.x - shapeStartPoint.x;
+        const height = pointer.y - shapeStartPoint.y;
+
+        currentShape.set({
+            width: Math.abs(width),
+            height: Math.abs(height),
+            left: width > 0 ? shapeStartPoint.x : pointer.x,
+            top: height > 0 ? shapeStartPoint.y : pointer.y
+        });
+    } else if (currentTool === tools.CIRCLE) {
+        const rx = Math.abs(pointer.x - shapeStartPoint.x) / 2;
+        const ry = Math.abs(pointer.y - shapeStartPoint.y) / 2;
+
+        currentShape.set({
+            rx: rx,
+            ry: ry,
+            left: Math.min(pointer.x, shapeStartPoint.x),
+            top: Math.min(pointer.y, shapeStartPoint.y)
+        });
+    }
+
+    canvas.renderAll();
+};
+shapeDrawingMouseUp = function (options) {
+    if (currentTool === tools.SELECT) return;
+
+    if (isDrawingShape && currentShape) {
+        currentShape.set({
+            evented: true,
+            selectable: true,
+            hasControls: true,
+            hasBorders: true,
+            opacity: defaultMaskOpacity, 
+            erasable: true,
+            isBoundary: true
+        });
+
+        const finishedShape = currentShape;
+        lastBoundaryObject = finishedShape;
+
+        isDrawingShape = false;
+        currentShape = null;
+        shapeStartPoint = null;
+
+        canvas.renderAll();
+        updateLayerList();
+
+        setTimeout(() => {
+            setTool(tools.SELECT);
+            canvas.setActiveObject(finishedShape);
+            canvas.renderAll();
+            updateLayerList(); 
+        }, 10);
+    }
+};
+
+
+canvas.on('mouse:down', shapeDrawingMouseDown);
+canvas.on('mouse:move', shapeDrawingMouseMove);
+canvas.on('mouse:up', shapeDrawingMouseUp);
+
+/* ------------------------------
+   POLYGON TOOL
+------------------------------ */
+function handlePolygonClick(options) {
+    const pointer = canvas.getPointer(options.e);
+
+    if (polygonPoints.length === 0) {
+        saveState();
+        isDrawingPolygon = true;
+    }
+
+    if (polygonPoints.length >= 3) {
+        const firstPoint = polygonPoints[0];
+        const distance = Math.sqrt(
+            Math.pow(pointer.x - firstPoint.x, 2) +
+            Math.pow(pointer.y - firstPoint.y, 2)
+        );
+
+        if (distance < 10) {
+            finishPolygon();
+            return;
+        }
+    }
+
+    polygonPoints.push({ x: pointer.x, y: pointer.y });
+    updatePolygonPreview();
+}
+
+function updatePolygonPreview() {
+    if (polygonLineGroup) {
+        canvas.remove(polygonLineGroup);
+    }
+
+    if (polygonPoints.length === 0) return;
+
+    const lines = [];
+    for (let i = 0; i < polygonPoints.length - 1; i++) {
+        lines.push(new fabric.Line([
+            polygonPoints[i].x, polygonPoints[i].y,
+            polygonPoints[i + 1].x, polygonPoints[i + 1].y
+        ], {
+            stroke: 'white',
+            strokeWidth: 2,
+            selectable: false,
+            evented: false
+        }));
+    }
+
+    polygonPoints.forEach(point => {
+        lines.push(new fabric.Circle({
+            left: point.x - 3,
+            top: point.y - 3,
+            radius: 3,
+            fill: 'white',
+            stroke: 'black',
+            strokeWidth: 1,
+            selectable: false,
+            evented: false
+        }));
+    });
+
+    polygonLineGroup = new fabric.Group(lines, {
+        selectable: false,
+        evented: false
+    });
+
+    canvas.add(polygonLineGroup);
+    canvas.renderAll();
+}
+
+
+function finishPolygon() {
+    if (polygonPoints.length < 3) return;
+
+    if (!window.CURRENT_LABEL || !window.CURRENT_LABEL.color) {
+        Swal.fire({
+            title: 'No Label Selected',
+            text: 'Please select a label from the dataset list first!',
+            icon: 'warning',
+            confirmButtonText: 'OK',
+            confirmButtonColor: '#4b49ac'
+        });
+        clearPolygon();
+        return;
+    }
+
+    const shapeColor = window.CURRENT_LABEL.color;
+    const label = getCurrentLabelData();
+
+    const polygon = new fabric.Polygon(polygonPoints, {
+        fill: shapeColor,
+        stroke: shapeColor,
+        strokeWidth: 1,
+        opacity: defaultMaskOpacity, 
+        selectable: true,
+        evented: true,
+        hasControls: true,
+        hasBorders: true,
+        erasable: true,
+        objectCaching: false,
+        labelName: label.name,
+        labelColor: label.color,
+        datasetId: label.id,          
+        attributes: label.attributes, 
+        isBoundary: true
+    });
+
+
+
+    lastBoundaryObject = polygon;
+
+    canvas.add(polygon);
+    setTool(tools.SELECT);
+    setTimeout(() => {
+        polygon.setCoords();          
+        canvas.setActiveObject(polygon);
+        canvas.fire('selection:created', { selected: [polygon] });
+        canvas.requestRenderAll();
+        updateLayerList();
+    }, 0);
+
+    clearPolygon();
+
+}
+
+function clearPolygon() {
+    if (polygonLineGroup) {
+        canvas.remove(polygonLineGroup);
+        polygonLineGroup = null;
+    }
+    polygonPoints = [];
+    isDrawingPolygon = false;
+    canvas.renderAll();
+}
+
+canvas.on('mouse:dblclick', function () {
+    if (currentTool === tools.POLYGON) {
+        finishPolygon();
+    }
+});
+
+/* ------------------------------
+   UNDO / REDO
+------------------------------ */
+function saveState() {
+    const json = JSON.stringify(canvas.toJSON([
+        'selectable',
+        'evented',
+        'erasable',
+        'isMask',
+        'isMaskGroup',
+        'isBoundary',
+        'labelName',
+        'labelColor',
+        'opacity',
+        'datasetId',   
+        'attributes'   
+    ]));
+    
+    if (historyStack.length > 0 && historyStack[historyStack.length - 1] === json) {
+        return;
+    }
+    
+    historyStack.push(json);
+
+    if (historyStack.length > MAX_HISTORY) {
+        historyStack.shift();
+    }
+
+    redoStack = [];
+}
+
+function undo() {
+    if (historyStack.length === 0) return;
+
+    const currentState = JSON.stringify(canvas.toJSON([
+        'selectable',
+        'evented',
+        'erasable',
+        'isMask',
+        'isMaskGroup',
+        'isBoundary',
+        'labelName',
+        'labelColor',
+        'opacity'
+    ])
+    );
+    redoStack.push(currentState);
+
+    const previousState = historyStack.pop();
+    canvas.loadFromJSON(previousState, function () {
+        canvas.renderAll();
+        setTool(currentTool);
+    });
+}
+
+function redo() {
+    if (redoStack.length === 0) return;
+
+    const currentState = JSON.stringify(canvas.toJSON([
+        'selectable',
+        'evented',
+        'erasable',
+        'isMask',
+        'isMaskGroup',
+        'isBoundary',
+        'labelName',
+        'labelColor',
+        'opacity'
+    ])
+    );
+    historyStack.push(currentState);
+
+    const nextState = redoStack.pop();
+    canvas.loadFromJSON(nextState, function () {
+        canvas.renderAll();
+        setTool(currentTool);
+    });
+}
+
+// canvas.on('path:created', function (e) {
+//     if (currentTool === tools.ERASER) {
+//         e.path.set({
+//             globalCompositeOperation: 'destination-out',
+//             selectable: false,
+//             evented: false,
+//             excludeFromExport: true
+//         });
+//         canvas.renderAll();
+//         return;
+//     }
+
+//     const label = getCurrentLabelData();
+
+//     if (label) {
+//         e.path.set({
+//             opacity: defaultMaskOpacity, 
+//             isBoundary: true,
+//             erasable: true,
+//             labelName: label.name,
+//             labelColor: label.color,
+//             datasetId: label.id,           
+//             attributes: label.attributes   
+//         });
+//     }
+
+//     lastBoundaryObject = e.path;
+//     canvas.requestRenderAll();
+//     updateLayerList();
+// });
+
+
+canvas.on('path:created', function (e) {
+    const newPath = e.path;
+
+    if (currentTool === tools.ERASER) {
+        newPath.set({
+            globalCompositeOperation: 'destination-out',
+            selectable: false,
+            evented: false,
+            excludeFromExport: true
+        });
+        canvas.renderAll();
+        return;
+    }
+
+    const label = getCurrentLabelData();
+    if (!label) return;
+
+    const pathData = newPath.path;
+    let isClosed = false;
+
+    if (pathData && pathData.length > 2) {
+        const start = pathData[0]; 
+        const end = pathData[pathData.length - 1]; 
+
+        const startX = start[1];
+        const startY = start[2];
+        const endX = end[end.length - 2];
+        const endY = end[end.length - 1];
+
+        const dist = Math.sqrt(Math.pow(startX - endX, 2) + Math.pow(startY - endY, 2));
+
+        if (dist < 25) {
+            newPath.set({
+                fill: label.color,
+                fillRule: 'evenodd'
+            });
+            isClosed = true;
+        } else {
+            newPath.set({ fill: null });
+        }
+    }
+
+    newPath.set({
+        opacity: 1, 
+        stroke: label.color,
+        strokeWidth: brushSize,
+        strokeLineCap: 'round',
+        strokeLineJoin: 'round',
+        isBoundary: true,
+        erasable: true,
+        labelName: label.name,
+        labelColor: label.color,
+        datasetId: label.id,
+        attributes: label.attributes
+    });
+
+    
+    const matchingObj = canvas.getObjects().find(obj => 
+        obj !== newPath && 
+        obj.labelName === label.name && 
+        obj.type !== 'image' &&
+        obj.globalCompositeOperation !== 'destination-out'
+    );
+
+    if (matchingObj) {
+        let itemsToGroup = [];
+
+        if (matchingObj.type === 'group') {
+            const groupItems = matchingObj.getObjects();
+            matchingObj._restoreObjectsState(); 
+            canvas.remove(matchingObj);
+            itemsToGroup = [...groupItems];
+        } else {
+            matchingObj.set('opacity', 1); 
+            canvas.remove(matchingObj);
+            itemsToGroup = [matchingObj];
+        }
+
+        canvas.remove(newPath);
+        itemsToGroup.push(newPath);
+
+        const newGroup = new fabric.Group(itemsToGroup, {
+            selectable: true,
+            evented: true,
+            opacity: defaultMaskOpacity, 
+            labelName: label.name,
+            labelColor: label.color,
+            datasetId: label.id,
+            attributes: label.attributes,
+            isMaskGroup: true,
+            isBoundary: true, 
+            erasable: true
+        });
+
+        canvas.add(newGroup);
+        canvas.setActiveObject(newGroup);
+        lastBoundaryObject = newGroup;
+
+    } else {
+        newPath.set('opacity', defaultMaskOpacity);
+        lastBoundaryObject = newPath;
+    }
+
+    canvas.requestRenderAll();
+    updateLayerList();
+});
+
+
+function getToolIconHtml(obj) {
+    if (obj.isMask || obj.isMaskGroup) {
+        return '<i class="bi bi-paint-bucket"></i>';
+    }
+    
+    switch (obj.type) {
+        case 'rect':
+            return '<i class="bi bi-bounding-box"></i>';
+        case 'ellipse':
+        case 'circle':
+            return '<i class="bi bi-circle"></i>';
+        case 'polygon':
+            return '<i class="bi bi-hexagon"></i>';
+        case 'path':
+            return '<i class="bi bi-brush"></i>';
+        default:
+            return '<i class="bi bi-tag-fill"></i>';
+    }
+}
+
+function updateFloatingLabel() {
+    const activeObj = canvas.getActiveObject();
+    const labelEl = document.getElementById('floating-annotation-label');
+    
+    if (!activeObj || !activeObj.labelName || canvas.isDrawingMode) {
+        labelEl.style.display = 'none';
+        return;
+    }
+
+    const rect = activeObj.getBoundingRect();
+
+    const iconHtml = getToolIconHtml(activeObj);
+    labelEl.innerHTML = `${iconHtml} <span>${activeObj.labelName}</span>`;
+    
+    labelEl.style.backgroundColor = activeObj.labelColor || '#4b49ac';
+    labelEl.style.display = 'flex'; 
+
+    const labelWidth = labelEl.offsetWidth;
+    const leftPos = rect.left + (rect.width / 2) - (labelWidth / 2);
+    const topPos = rect.top - 8;
+
+    labelEl.style.left = leftPos + 'px';
+    labelEl.style.top = topPos + 'px';
+}
+
+canvas.on({
+    'selection:created': updateFloatingLabel,
+    'selection:updated': updateFloatingLabel,
+    'selection:cleared': () => document.getElementById('floating-annotation-label').style.display = 'none',
+    'object:moving': updateFloatingLabel,
+    'object:scaling': updateFloatingLabel,
+    'mouse:wheel': updateFloatingLabel
+});
+
+
+/* ------------------------------
+   DELETE SELECTED
+------------------------------ */
+function deleteSelected() {
+    const activeObjects = canvas.getActiveObjects();
+    console.log('>>> DELETE called. Active objects:', activeObjects.length);
+
+    if (activeObjects.length === 0) {
+        console.log('No objects selected to delete');
+        return;
+    }
+
+    console.log('Deleting objects:', activeObjects.map(obj => obj.type));
+    saveState();
+
+    activeObjects.forEach(obj => {
+        canvas.remove(obj);
+    });
+
+    canvas.discardActiveObject();
+    canvas.renderAll();
+    console.log('Objects deleted. Remaining:', canvas.getObjects().length);
+}
+/* ------------------------------
+   PAINT BUCKET (FLOOD FILL)
+------------------------------ */
+canvas.on('mouse:down', function (opt) {
+    if (currentTool !== tools.PAINT) return;
+
+    const pointer = canvas.getPointer(opt.e);
+    const x = Math.round(pointer.x);
+    const y = Math.round(pointer.y);
+
+    if (!window.CURRENT_LABEL || !window.CURRENT_LABEL.color) {
+        Swal.fire({
+            title: 'No Label Selected',
+            text: 'Please select a label from the dataset list first!',
+            icon: 'warning',
+            confirmButtonText: 'OK',
+            confirmButtonColor: '#4b49ac'
+        });
+        return;
+    }
+
+    saveState();
+
+    const fillColor = window.CURRENT_LABEL.color;
+    performFloodFill(x, y, fillColor);
+});
+
+
+function dilateMask(maskCtx, imageData, w, h, radius = 1) {
+    const src = new Uint8ClampedArray(imageData.data);
+    const dst = imageData.data;
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const idx = (y * w + x) * 4;
+            if (src[idx + 3] > 0) continue;
+
+            for (let dy = -radius; dy <= radius; dy++) {
+                for (let dx = -radius; dx <= radius; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+
+                    const nIdx = (ny * w + nx) * 4;
+                    if (src[nIdx + 3] > 0) {
+                        dst[idx] = src[nIdx];
+                        dst[idx + 1] = src[nIdx + 1];
+                        dst[idx + 2] = src[nIdx + 2];
+                        dst[idx + 3] = 255;
+                        dx = dy = radius + 1;
+                    }
+                }
+            }
+        }
+    }
+}
+function performFloodFill(startX, startY, colorHex) {
+    const w = originalWidth;
+    const h = originalHeight;
+
+    if (!w || !h) {
+        console.error("Original dimensions not found. Cannot fill.");
+        return;
+    }
+
+    if (startX < 0 || startY < 0 || startX >= w || startY >= h) return;
+
+    const currentZoom = canvas.getZoom();
+    const currentVpt = canvas.viewportTransform.slice();
+    const currentW = canvas.getWidth();
+    const currentH = canvas.getHeight();
+
+    const bgObj = canvas.getObjects().find(o => o.type === 'image' && !o.isMask);
+    const bgWasVisible = bgObj ? bgObj.visible : true;
+    if (bgObj) bgObj.set('visible', false);
+
+    const restoreList = [];
+    canvas.getObjects().forEach(obj => {
+        if ((obj.isBoundary || obj.isMask || obj.isMaskGroup) && obj.visible) {
+            restoreList.push({ obj: obj, opacity: obj.opacity });
+            obj.set('opacity', 1);
+        }
+    });
+
+    canvas.setZoom(1);
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    canvas.setWidth(w);
+    canvas.setHeight(h);
+    canvas.renderAll();
+
+    const snapshotCanvas = canvas.toCanvasElement(1.0, {
+        format: 'png',
+        enableRetinaScaling: false 
+    });
+
+    const ctx = snapshotCanvas.getContext('2d', { willReadFrequently: true });
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const data = imageData.data;
+
+    canvas.setZoom(currentZoom);
+    canvas.setViewportTransform(currentVpt);
+    canvas.setWidth(currentW);
+    canvas.setHeight(currentH);
+    if (bgObj) bgObj.set('visible', bgWasVisible);
+    restoreList.forEach(item => item.obj.set('opacity', item.opacity));
+    canvas.renderAll();
+
+    const getIdx = (x, y) => (y * w + x) * 4;
+    const startIdx = getIdx(startX, startY);
+    const targetR = data[startIdx];
+    const targetG = data[startIdx + 1];
+    const targetB = data[startIdx + 2];
+    const targetA = data[startIdx + 3];
+
+    const fillRGB = hexToRgb(colorHex);
+
+    if (
+        Math.abs(targetR - fillRGB.r) < 5 &&
+        Math.abs(targetG - fillRGB.g) < 5 &&
+        Math.abs(targetB - fillRGB.b) < 5 &&
+        targetA > 200
+    ) return;
+
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = w;
+    maskCanvas.height = h;
+    const maskCtx = maskCanvas.getContext('2d');
+    const maskImgData = maskCtx.createImageData(w, h);
+    const maskData = maskImgData.data;
+
+    const stack = [[startX, startY]];
+    const seen = new Uint8Array(w * h);
+    let minX = w, minY = h, maxX = 0, maxY = 0;
+    let filled = 0;
+
+    while (stack.length) {
+        const [x, y] = stack.pop();
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+
+        const key = y * w + x;
+        if (seen[key]) continue;
+        seen[key] = 1;
+
+        const i = getIdx(x, y);
+        const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+
+        let shouldFill = false;
+        if (targetA < 20) {
+            shouldFill = a < 220; 
+        } else {
+            shouldFill =
+                Math.abs(r - targetR) +
+                Math.abs(g - targetG) +
+                Math.abs(b - targetB) < 50 &&
+                Math.abs(a - targetA) < 100;
+        }
+
+        if (!shouldFill) continue;
+
+        maskData[i] = fillRGB.r;
+        maskData[i + 1] = fillRGB.g;
+        maskData[i + 2] = fillRGB.b;
+        maskData[i + 3] = 255;
+
+        filled++;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+
+        stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+    }
+
+    if (!filled) return;
+
+    dilateMask(maskCtx, maskImgData, w, h, 1);
+
+    const pad = 2;
+    minX = Math.max(0, minX - pad);
+    minY = Math.max(0, minY - pad);
+    maxX = Math.min(w, maxX + pad);
+    maxY = Math.min(h, maxY + pad);
+
+    const cropW = maxX - minX;
+    const cropH = maxY - minY;
+    if (cropW <= 0 || cropH <= 0) return;
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = cropW;
+    cropCanvas.height = cropH;
+    const cropCtx = cropCanvas.getContext('2d');
+    const cropData = cropCtx.createImageData(cropW, cropH);
+
+    for (let y = 0; y < cropH; y++) {
+        for (let x = 0; x < cropW; x++) {
+            const s = ((minY + y) * w + (minX + x)) * 4;
+            const d = (y * cropW + x) * 4;
+            if (maskData[s + 3]) {
+                cropData.data.set(maskData.slice(s, s + 4), d);
+            }
+        }
+    }
+    cropCtx.putImageData(cropData, 0, 0);
+
+    fabric.Image.fromURL(cropCanvas.toDataURL(), img => {
+        const label = getCurrentLabelData();
+
+        img.set({
+            left: minX,
+            top: minY,
+            opacity: 1,
+            selectable: true,
+            evented: true,
+            erasable: true,
+            isMask: true,
+            labelName: label ? label.name : window.CURRENT_LABEL.name,
+            labelColor: label ? label.color : window.CURRENT_LABEL.color,
+            datasetId: label ? label.id : null,
+            attributes: label ? label.attributes : {}
+        });
+
+        const boundary = lastBoundaryObject;
+
+        if (boundary && boundary.visible && (boundary.isBoundary || boundary.isMaskGroup)) {
+            canvas.remove(boundary);
+            boundary.set('opacity', 1);
+            
+            let itemsToGroup = [img];
+            if (boundary.type === 'group') {
+                const oldItems = boundary.getObjects();
+                boundary._restoreObjectsState();
+                itemsToGroup = [...oldItems, img];
+            } else {
+                itemsToGroup.push(boundary);
+            }
+
+            const group = new fabric.Group(itemsToGroup, {
+                selectable: true,
+                evented: true,
+                opacity: defaultMaskOpacity,
+                subTargetCheck: true,
+                erasable: true,
+                isMaskGroup: true,
+                isBoundary: true, 
+                labelName: label ? label.name : window.CURRENT_LABEL.name,
+                labelColor: label ? label.color : window.CURRENT_LABEL.color,
+                datasetId: label ? label.id : null,
+                attributes: label ? label.attributes : {}
+            });
+
+            canvas.add(group);
+            canvas.setActiveObject(group);
+            lastBoundaryObject = group;
+        } else {
+            img.set('opacity', defaultMaskOpacity);
+            canvas.add(img);
+            canvas.setActiveObject(img);
+        }
+
+        canvas.requestRenderAll();
+        saveState();
+        updateLayerList();
+    });
+}
+
+
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return { r, g, b };
+}
+
+
+function getMetadata() {
+    const canvasJSON = canvas.toJSON([
+        'selectable',
+        'evented',
+        'globalCompositeOperation',
+        'isMask',        
+        'isMaskGroup',
+        'isBoundary',   
+        'labelName',
+        'labelColor',
+        'opacity',      
+        'datasetId',
+        'attributes'
+    ]);
+    return {
+        meta: { 
+            original_width: originalWidth, 
+            original_height: originalHeight, 
+            timestamp: new Date().toISOString() 
+        },
+        fabricJSON: canvasJSON,
+        shapes: convertFabricToShapes(canvasJSON)
+    };
+}
+
+window.updateBrushColor = function (color) {
+    if (canvas.freeDrawingBrush) {
+        canvas.freeDrawingBrush.color = color;
+    }
+};
+
+function convertFabricToShapes(fabricJSON) {
+    const shapes = [];
+
+    fabricJSON.objects.forEach(obj => {
+        if (obj.type === 'image') return;
+
+        const shape = {
+            type: obj.type,
+            left: obj.left || 0,
+            top: obj.top || 0,
+            width: obj.width || 0,
+            height: obj.height || 0,
+            fill: obj.fill,
+            stroke: obj.stroke,
+            strokeWidth: obj.strokeWidth || 0
+        };
+
+        if (obj.type === 'rect') {
+            shape.points = [
+                { x: obj.left, y: obj.top },
+                { x: obj.left + obj.width, y: obj.top },
+                { x: obj.left + obj.width, y: obj.top + obj.height },
+                { x: obj.left, y: obj.top + obj.height }
+            ];
+        } else if (obj.type === 'ellipse') {
+            shape.radiusX = obj.rx;
+            shape.radiusY = obj.ry;
+            shape.center = { x: obj.left + obj.rx, y: obj.top + obj.ry };
+        } else if (obj.type === 'polygon') {
+            shape.points = obj.points;
+        } else if (obj.type === 'path') {
+            shape.path = obj.path;
+        }
+
+        shapes.push(shape);
+    });
+
+    return shapes;
+}
+
+/* ------------------------------
+   KEYBOARD SHORTCUTS
+------------------------------ */
+document.addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT") return;
+
+    if (e.key === "v") setTool(tools.SELECT);
+    else if (e.key === "b") setTool(tools.BRUSH);
+    else if (e.key === "e") setTool(tools.ERASER);
+    else if (e.key === "r") setTool(tools.RECT);
+    else if (e.key === "f") setTool(tools.PAINT);
+    else if (e.key === "c") setTool(tools.CIRCLE);
+    else if (e.key === "g") setTool(tools.POLYGON);
+    else if (e.key === "Delete" || e.key === "Backspace") deleteSelected();
+    else if (e.key === "z" && !e.ctrlKey) undo();
+    else if (e.key === "y" && !e.ctrlKey) redo();
+    else if (e.key === "s" && !e.ctrlKey) {
+        e.preventDefault();
+        saveMask();
+    }
+    else if (e.key === "k") {
+        openShortcutsModal();
+    }
+    else if (e.key === "Enter" && currentTool === tools.POLYGON) {
+        finishPolygon();
+    }
+});
+
+/* ===============================
+   INITIALIZATION
+================================ */
+console.log("SEGMENTATION_CONFIG:", window.SEGMENTATION_CONFIG);
+const config = window.SEGMENTATION_CONFIG || {};
+const { imageUrl, taskId, startTime } = config;
+
+
+if (!startTime || isNaN(new Date(startTime).getTime())) {
+    console.warn("Invalid or missing startTime:", startTime);
+}
+
+// if (!imageUrl) console.warn("SEGMENTATION_CONFIG missing or invalid (imageUrl not found).");
+
+console.log("imageUrl:", imageUrl);
+console.log("taskId:", taskId);
+console.log("startTime:", startTime);
+
+function startLiveTimer() {
+    const timerDisplay = document.getElementById('taskTimer');
+    if (!timerDisplay) return;
+
+    if (!startTime || isNaN(new Date(startTime).getTime())) {
+        timerDisplay.textContent = "00:00:00";
+        return;
+    }
+
+    if (taskTimerInterval) {
+        clearInterval(taskTimerInterval);
+        taskTimerInterval = null;
+    }
+
+    const start = new Date(startTime).getTime();
+
+    taskTimerInterval = setInterval(() => {
+        const diff = Math.max(0, Date.now() - start);
+
+        const hours = Math.floor(diff / 3600000);
+        const minutes = Math.floor((diff % 3600000) / 60000);
+        const seconds = Math.floor((diff % 60000) / 1000);
+
+        const pad = n => String(n).padStart(2, '0');
+        timerDisplay.textContent =
+            `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    }, 1000);
+}
+
+
+const img = new Image();
+img.crossOrigin = "anonymous";
+
+if (!imageUrl) {
+    console.error("Aborting image load: imageUrl is missing/undefined");
+} else {
+    console.log("Loading image from:", imageUrl);
+    img.src = imageUrl;
+}
+
+img.onerror = function () {
+    console.error("Failed to load image:", imageUrl);
+    alert(`Failed to load image: ${imageUrl}\nPlease check if the file exists and is accessible.`);
+};
+
+img.onload = () => {
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+
+    console.log("✅ Image loaded successfully (Natural):", w, "x", h, "Rendered:", img.width, "x", img.height);
+
+    originalWidth = w;
+    originalHeight = h;
+
+
+    const minDimension = Math.min(w, h);
+
+    const dynamicMax = Math.max(50, Math.floor(minDimension / 5));
+
+    const dynamicDefault = Math.max(2, Math.floor(minDimension / 35));
+
+    const brushSlider = document.getElementById('brushSlider');
+    if (brushSlider) {
+        brushSlider.max = dynamicMax;
+        brushSlider.value = dynamicDefault;
+    }
+
+    setBrushSize(dynamicDefault);
+
+    imageCanvas.width = originalWidth;
+    imageCanvas.height = originalHeight;
+    imgCtx.drawImage(img, 0, 0, originalWidth, originalHeight);
+    console.log("✅ Background rendered on imageCanvas");
+
+    canvas.setWidth(originalWidth);
+    canvas.setHeight(originalHeight);
+    canvas.backgroundColor = null;
+    console.log("✅ Fabric canvas set to transparent (backgroundColor: null)");
+
+    if (config.savedState && config.savedState.fabricJSON) {
+        console.log("Found saved state.", config.savedState);
+        const jsonToLoad = config.savedState.fabricJSON;
+
+        if (jsonToLoad.objects) {
+            console.log(`Saved Objects count: ${jsonToLoad.objects.length}`);
+            jsonToLoad.objects.forEach((o, i) => console.log(`Object ${i}: type=${o.type}, visible=${o.visible}, opacity=${o.opacity}`));
+        }
+
+        window.IS_LOADING_STATE = true;
+
+        canvas.loadFromJSON(jsonToLoad, function () {
+            console.log("Canvas loaded from JSON.");
+            window.IS_LOADING_STATE = false;
+
+            canvas.getObjects().forEach(obj => {
+                obj.set({
+                    selectable: true,
+                    evented: true,
+                    hasControls: true,
+                    hasBorders: true
+                });
+
+                if (typeof obj.opacity === 'undefined') {
+                    obj.set('opacity', defaultMaskOpacity);
+                }
+
+                if (obj.type === 'image' && (obj.labelName || obj.datasetId)) {
+                    obj.isMask = true; 
+                }
+            });
+
+            canvas.renderAll();
+            
+            setTool(tools.SELECT); 
+            
+            if (window.updateLayerList) updateLayerList();
+        });
+    } else {
+        canvas.renderAll();
+    }
+
+    document.getElementById('btn-select').click();
+
+    if (window.CURRENT_LABEL && window.CURRENT_LABEL.color) {
+        window.updateBrushColor(window.CURRENT_LABEL.color);
+    }
+
+    startLiveTimer();
+};
+
+img.src = imageUrl;
+console.log("Loading image from:", imageUrl);
+
+window.updateBrushColor = function (color) {
+    if (!color) return;
+    console.log("Updating brush color to:", color);
+
+    const rgb = hexToRgb(color);
+    const rgba = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+    const stroke = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+
+
+    fabric.Object.prototype.transparentCorners = false;
+
+    if (canvas.freeDrawingBrush) {
+        const rgb = hexToRgb(window.CURRENT_LABEL.color);
+        canvas.freeDrawingBrush.color = `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+        canvas.freeDrawingBrush.width = brushSize;
+        canvas.freeDrawingBrush.globalCompositeOperation = 'source-over';
+
+    }
+
+    window.CURRENT_COLOR_RGBA = rgba;
+    window.CURRENT_COLOR_STROKE = stroke;
+};
+
+function hexToRgb(hex) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+        ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) }
+        : { r: 0, g: 0, b: 0 };
+}
+
+
+window.CURRENT_COLOR_RGBA = 'rgba(0, 100, 255, 0.8)';
+window.CURRENT_COLOR_STROKE = 'rgb(0, 100, 255)';
+
+/* ------------------------------
+   IMAGE ENHANCEMENTS
+------------------------------ */
+window.updateImageFilters = function () {
+    const contrast = document.getElementById('contrastSlider').value;
+    const saturation = document.getElementById('saturationSlider').value;
+    const brightness = document.getElementById('brightnessSlider').value;
+
+    console.log(`Filters - Contrast: ${contrast}, Saturation: ${saturation}, Brightness: ${brightness}`);
+
+    document.getElementById('contrastDisplay').innerText = contrast + '%';
+    document.getElementById('saturationDisplay').innerText = saturation + '%';
+    document.getElementById('brightnessDisplay').innerText = brightness + '%';
+
+    const imgCanvas = document.getElementById('imageCanvas');
+    if (imgCanvas) {
+        const filterString = `contrast(${contrast}%) saturate(${saturation}%) brightness(${brightness}%)`;
+        console.log("Applying filter:", filterString);
+        imgCanvas.style.filter = filterString;
+    } else {
+        console.error("❌ imageCanvas element not found!");
+    }
+};
+
+/* ------------------------------
+   LAYER HISTORY
+------------------------------ */
+function updateLayerList() {
+    const listContainer = document.getElementById('layerList');
+    if (!listContainer) return;
+
+    listContainer.innerHTML = '';
+
+    const objects = canvas.getObjects();
+    const maskObjects = objects.filter(obj => {
+        if (obj.type === 'image' && !obj.isMask) return false;
+        if (obj.globalCompositeOperation === 'destination-out') return false;
+        if (obj.labelName || obj.isMask || obj.isMaskGroup) return true;
+        return false;
+    });
+
+    if (maskObjects.length === 0) {
+        listContainer.innerHTML = '<div class="text-muted text-center p-3 small">No shapes drawn yet.</div>';
+        return;
+    }
+
+    [...maskObjects].reverse().forEach((obj) => {
+        let labelName = obj.labelName || 'Mask';
+        let labelColor = obj.labelColor || '#666666';
+
+        const item = document.createElement('div');
+        item.className = 'd-flex align-items-center p-2 border-bottom small';
+        item.style.cursor = 'pointer';
+        item.style.transition = 'background-color 0.2s';
+
+        if (canvas.getActiveObjects().includes(obj)) {
+            item.style.backgroundColor = '#e8f0fe';
+            item.style.borderLeft = '3px solid #4b49ac';
+        } else {
+            item.style.backgroundColor = '#fff';
+            item.style.borderLeft = '3px solid transparent';
+        }
+
+        // Color Box
+        const colorBox = document.createElement('span');
+        colorBox.style.width = '12px';
+        colorBox.style.height = '12px';
+        colorBox.style.backgroundColor = labelColor;
+        colorBox.style.border = '1px solid rgba(0,0,0,0.2)';
+        colorBox.style.borderRadius = '2px';
+        colorBox.style.marginRight = '8px';
+        colorBox.style.flexShrink = '0';
+
+        // Text (Label + Attributes)
+        const textContainer = document.createElement('div');
+        textContainer.className = 'flex-grow-1';
+        textContainer.style.overflow = 'hidden';
+
+        const typeIcon = getTypeIcon(obj.type);
+
+        let attrString = "";
+        if (obj.attributes && typeof obj.attributes === 'object') {
+            attrString = Object.entries(obj.attributes)
+                .filter(([_, val]) => val && val.toString().trim() !== "")
+                .map(([key, val]) => `${key}: ${val}`)
+                .join(', ');
+        }
+
+        textContainer.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <span style="font-weight: 600; color: #333;">${typeIcon} ${labelName}</span>
+            </div>
+            ${attrString ? `<div class="text-muted text-truncate" style="font-size: 11px; margin-top: 2px;">${attrString}</div>` : ''}
+        `;
+
+        const opacityBadge = document.createElement('span');
+        opacityBadge.className = 'badge badge-light border ms-2';
+        opacityBadge.style.fontSize = '10px';
+        opacityBadge.textContent = Math.round((obj.opacity || 0.5) * 100) + '%';
+
+        item.appendChild(colorBox);
+        item.appendChild(textContainer);
+        item.appendChild(opacityBadge);
+
+        item.onclick = (e) => {
+            canvas.discardActiveObject();
+            canvas.setActiveObject(obj);
+            canvas.requestRenderAll();
+            updateLayerList();
+        };
+
+        listContainer.appendChild(item);
+    });
+}
+
+function getTypeIcon(type) {
+    const icons = {
+        'rect': '<i class="bi bi-bounding-box"></i>',
+        'circle': '<i class="bi bi-circle"></i>',
+        'ellipse': '<i class="bi bi-circle"></i>',
+        'polygon': '<i class="bi bi-hexagon"></i>',
+        'path': '<i class="bi bi-brush"></i>',
+        'group': '<i class="bi bi-layers-half"></i>',
+        'image': '<i class="bi bi-tag-fill"></i>'
+    };
+    return icons[type] || '<i class="bi bi-record-circle"></i>';
+}
+
+
+/* ------------------------------
+   AUTO SAVE
+------------------------------ */
+let autoSaveTimeout;
+const AUTO_SAVE_DELAY = 1000;
+
+function triggerAutoSave() {
+    const statusEl = document.getElementById('saveStatus');
+    if (statusEl) {
+        statusEl.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Saving...';
+        statusEl.classList.remove('text-success', 'text-muted');
+        statusEl.classList.add('text-warning');
+    }
+
+    if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+
+    autoSaveTimeout = setTimeout(() => {
+        saveMask(false, true);
+    }, AUTO_SAVE_DELAY);
+}
+
+canvas.on('object:added', (e) => {
+    if (window.IS_LOADING_STATE) return;
+    updateLayerList();
+    triggerAutoSave();
+});
+canvas.on('object:removed', (e) => {
+    if (window.IS_LOADING_STATE) return;
+    updateLayerList();
+    triggerAutoSave();
+});
+canvas.on('selection:created', (e) => {
+    console.log('Selection created');
+    updateLayerList();
+    updateOpacitySliderFromSelection();
+});
+
+canvas.on('selection:updated', (e) => {
+    console.log('Selection updated');
+    updateLayerList();
+    updateOpacitySliderFromSelection();
+});
+
+canvas.on('selection:cleared', (e) => {
+    console.log('Selection cleared');
+    updateLayerList();
+    updateOpacitySliderFromSelection();
+});
+
+function syncLabelFromSelection(e) {
+    const activeObj = e.selected ? e.selected[0] : canvas.getActiveObject();
+
+    if (activeObj && activeObj.labelName && activeObj.datasetId) {
+        window.CURRENT_LABEL = {
+            name: activeObj.labelName,
+            color: activeObj.labelColor,
+            id: activeObj.datasetId,
+            attributes: activeObj.attributes || {}
+        };
+
+        console.log("Synced label from selection:", window.CURRENT_LABEL);
+
+        document.querySelectorAll('.dataset-item').forEach(el => el.classList.remove('active'));
+        const activeEl = document.getElementById('label-' + activeObj.datasetId);
+        if (activeEl) activeEl.classList.add('active');
+
+        if (window.updateBrushColor) {
+            window.updateBrushColor(activeObj.labelColor);
+        }
+    }
+}
+
+canvas.on('selection:created', syncLabelFromSelection);
+canvas.on('selection:updated', syncLabelFromSelection);
+
+
+function notifyQaTaskCompleted(taskId, status) {
+    const channel = new BroadcastChannel("qa_tasks"); 
+    channel.postMessage({
+        type: "QA_TASK_COMPLETED", 
+        taskId: taskId,
+        status: status 
+    });
+    channel.close();
+}
+
+/* ------------------------------
+   SUBMIT WORKFLOW
+------------------------------ */
+
+
+
+function saveMask(isSubmitting = false, isAutoSave = false) {
+    const originalOpacities = [];
+    const originalVisibilities = [];
+    const originalBackgroundColor = canvas.backgroundColor;
+
+    const originalViewport = canvas.viewportTransform;
+    const originalZoom = canvas.getZoom();
+    const originalCanvasWidth = canvas.getWidth();
+    const originalCanvasHeight = canvas.getHeight();
+
+
+    if (typeof originalWidth !== 'undefined' && typeof originalHeight !== 'undefined') {
+        canvas.setWidth(originalWidth);
+        canvas.setHeight(originalHeight);
+    }
+
+    canvas.setZoom(1);
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+
+    const tempBgColor = canvas.backgroundColor;
+    canvas.backgroundColor = null;
+
+    canvas.getObjects().forEach((obj, index) => {
+        if (obj.type === 'image' && !obj.isMask) {
+            originalVisibilities[index] = obj.visible;
+            obj.set('visible', false);
+        } else {
+            originalOpacities[index] = obj.opacity;
+        }
+    });
+
+    console.log('📸 Capturing mask - backgroundColor:', canvas.backgroundColor, 'backgroundImage:', canvas.backgroundImage);
+
+    canvas.renderAll();
+
+    const dataUrl = canvas.toDataURL({
+        format: 'png',
+        quality: 1.0,
+        multiplier: 1,
+        enableRetinaScaling: false
+    });
+
+    console.log('📸 Mask captured - dataURL length:', dataUrl.length);
+
+
+    canvas.backgroundColor = tempBgColor;
+
+    canvas.getObjects().forEach((obj, index) => {
+        if (obj.type === 'image' && !obj.isMask) {
+            obj.set('visible', originalVisibilities[index]);
+        } else {
+            obj.set('opacity', originalOpacities[index]);
+        }
+    });
+
+    canvas.setWidth(originalCanvasWidth);
+    canvas.setHeight(originalCanvasHeight);
+    canvas.setZoom(originalZoom);
+    canvas.setViewportTransform(originalViewport);
+
+    canvas.renderAll();
+
+    const metadata = getMetadata();
+
+    return fetch(`/api/qa_segmenter/task/${taskId}/save-mask/`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken()
+        },
+        body: JSON.stringify({
+            mask: dataUrl,
+            metadata: metadata
+        })
+    })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                if (isAutoSave) {
+                    const statusEl = document.getElementById('saveStatus');
+                    if (statusEl) {
+                        statusEl.innerHTML = '<i class="bi bi-check-circle"></i> Saved';
+                        statusEl.classList.remove('text-warning', 'text-muted');
+                        statusEl.classList.add('text-success');
+                        setTimeout(() => {
+                            statusEl.classList.remove('text-success');
+                            statusEl.classList.add('text-muted');
+                        }, 500);
+                    }
+                } else if (!isSubmitting) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Saved',
+                        text: 'Draft Saved!',
+                        timer: 1500,
+                        showConfirmButton: false
+                    });
+                }
+            } else {
+                throw new Error(data.message || 'Server returned error');
+            }
+        })
+        .catch(err => {
+            console.error("Save error:", err);
+            if (isAutoSave) {
+                const statusEl = document.getElementById('saveStatus');
+                if (statusEl) {
+                    statusEl.innerHTML = '<i class="bi bi-exclamation-circle"></i> Save Failed';
+                    statusEl.classList.remove('text-warning', 'text-muted');
+                    statusEl.classList.add('text-danger');
+                }
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: 'Error saving mask!'
+                });
+            }
+        });
+}
+
+function validateAnnotations() {
+    const objects = canvas.getObjects();
+    const errors = [];
+    const configs = (typeof window.AVAILABLE_DATASETS !== 'undefined') ? window.AVAILABLE_DATASETS : [];
+
+    console.log("--- Starting Validation ---");
+
+    objects.forEach((obj, idx) => {
+        if (obj.type === 'image' && !obj.isMask) return;
+        if (obj.globalCompositeOperation === 'destination-out') return;
+        if (!obj.labelName) return;
+
+        const config = configs.find(d =>
+            String(d.id) === String(obj.datasetId) ||
+            d.label_name === obj.labelName
+        );
+
+        if (!config) return;
+
+        if (config.attributes && config.attributes.length > 0) {
+            const objAttrs = obj.attributes || {};
+            const missing = [];
+
+            config.attributes.forEach(attrDef => {
+                const attrName = attrDef.name;
+                const val = objAttrs[attrName];
+
+                if (attrName === "Select Type") {
+                    return;
+                }
+
+                if (val === undefined || val === null || String(val).trim() === "") {
+                    missing.push(attrName);
+                }
+            });
+
+            if (missing.length > 0) {
+                errors.push(`Shape #${idx + 1} (${obj.labelName}) is missing: ${missing.join(', ')}`);
+            }
+        }
+    });
+
+    return errors;
+}
+
+
+function submitTaskToAPI() {
+    const taskId = window.SEGMENTATION_CONFIG.taskId;
+
+    Swal.fire({
+        title: 'Submit Task?',
+        text: "This will mark the task as SUBMITTED.",
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#4b49ac',
+        cancelButtonColor: '#d33',
+        confirmButtonText: 'Yes, Submit!'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            saveMask(true)
+                .then(() => {
+                    return fetch(`/api/qa_segmenter/task/${taskId}/submit/`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": getCSRFToken()
+                        }
+                    });
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        Swal.fire({
+                            icon: 'success',
+                            title: 'Submitted!',
+                            text: 'Task complete.',
+                            timer: 1000,
+                            showConfirmButton: false
+                        }).then(() => {
+                            notifyQaTaskCompleted(taskId, "APPROVED");
+                            window.close();
+                        });
+                    } else {
+                        throw new Error(data.message);
+                    }
+                })
+                .catch(err => {
+                    Swal.fire('Error', err.message || 'Submission failed', 'error');
+                });
+        }
+    });
+}
+
+function getCSRFToken() {
+    return document.cookie.split("; ").find(row => row.startsWith("csrftoken"))?.split("=")[1];
+}
+
+
+window.submitTask = function () {
+
+    const hasAnnotations = canvas.getObjects().some(obj => {
+        return obj.labelName && obj.visible && obj.globalCompositeOperation !== 'destination-out';
+    });
+
+    if (!hasAnnotations) {
+
+        if (window.CURRENT_LABEL) {
+            Swal.fire({
+                title: 'Forgot to Draw?',
+                html: `You selected <b>${window.CURRENT_LABEL.name}</b> settings, but you didn't draw anything on the image.`,
+                icon: 'warning',
+                confirmButtonText: 'OK'
+            });
+            return;
+        }
+
+        Swal.fire({
+            title: 'No Annotations',
+            text: 'You have not drawn anything. Submit as Empty?',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'OK',
+            confirmButtonColor: '#4b49ac'
+        });
+        return;
+    }
+
+
+    const errors = validateAnnotations();
+    if (errors.length > 0) {
+        Swal.fire({
+            title: 'Missing Attributes',
+            html: `<div class="text-left text-danger small"><ul>${errors.map(e => `<li>${e}</li>`).join('')}</ul></div>`,
+            icon: 'error'
+        });
+        return;
+    }
+
+    submitTaskToAPI();
+};
+
+
+/**
+ * SAM AI Integration Logic
+ */
+async function runSAMMagic(e) {
+    let x, y;
+
+    if (e && (e.clientX || e.type)) {
+
+        console.log(`Screen Click: ${e.clientX}, ${e.clientY}`);
+
+        if (typeof window.segmentationCanvas !== 'undefined') {
+            window.segmentationCanvas.calcOffset();
+
+            const pointer = window.segmentationCanvas.getPointer(e);
+            x = Math.round(pointer.x);
+            y = Math.round(pointer.y);
+        } else {
+            const targetCanvas = window.segmentationCanvas || window.canvas;
+            if (targetCanvas) {
+                targetCanvas.calcOffset();
+                const pointer = targetCanvas.getPointer(e);
+                x = Math.round(pointer.x);
+                y = Math.round(pointer.y);
+            } else {
+                console.error("SAM Error: Canvas not found for coordinate extraction");
+                return;
+            }
+        }
+    } else if (arguments.length >= 2) {
+        x = arguments[0];
+        y = arguments[1];
+    } else {
+        console.error("SAM Error: Invalid arguments passed to runSAMMagic", e);
+        return;
+    }
+
+    if (isNaN(x) || isNaN(y)) {
+        console.error("SAM Error: Invalid coordinates calculated", x, y);
+        Swal.fire('Error', 'Invalid click coordinates.', 'error');
+        return;
+    }
+
+    const taskId = window.SEGMENTATION_CONFIG.taskId;
+    const labelColor = window.CURRENT_LABEL.color;
+    const labelName = window.CURRENT_LABEL.name;
+
+    Swal.fire({
+        title: 'AI is thinking...',
+        html: `Segmenting object at point (${x}, ${y})`,
+        allowOutsideClick: false,
+        didOpen: () => { Swal.showLoading(); }
+    });
+
+    try {
+        const response = await fetch(`/api/segmenter/task/${taskId}/pre-segment/?x=${x}&y=${y}`);
+        const data = await response.json();
+
+        if (data.status === 'success') {
+            const base64Mask = `data:image/png;base64,${data.mask}`;
+
+            fabric.Image.fromURL(base64Mask, function (img) {
+                img.filters.push(new fabric.Image.filters.RemoveColor({
+                    color: '#000000',
+                    distance: 0.1
+                }));
+                img.filters.push(new fabric.Image.filters.BlendColor({
+                    color: labelColor,
+                    mode: 'tint',
+                    alpha: 1
+                }));
+                img.applyFilters();
+
+                const tempCanvas = img.toCanvasElement();
+                const tempCtx = tempCanvas.getContext('2d');
+                const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                const pixels = imageData.data;
+                
+                let minX = tempCanvas.width, minY = tempCanvas.height, maxX = 0, maxY = 0;
+                let foundPixels = false;
+
+                for (let y = 0; y < tempCanvas.height; y++) {
+                    for (let x = 0; x < tempCanvas.width; x++) {
+                        const alpha = pixels[(y * tempCanvas.width + x) * 4 + 3];
+                        if (alpha > 0) {
+                            if (x < minX) minX = x;
+                            if (y < minY) minY = y;
+                            if (x > maxX) maxX = x;
+                            if (y > maxY) maxY = y;
+                            foundPixels = true;
+                        }
+                    }
+                }
+
+                if (foundPixels) {
+                    img.set({
+                        left: minX,
+                        top: minY,
+                        width: maxX - minX,
+                        height: maxY - minY,
+                        srcX: minX,
+                        srcY: minY,
+                        cropX: minX,
+                        cropY: minY
+                    });
+                }
+
+                img.set({
+                    selectable: true,
+                    evented: true,
+                    opacity: defaultMaskOpacity,
+                    isMask: true,
+                    labelName: labelName,
+                    labelColor: labelColor,
+                    datasetId: window.CURRENT_LABEL.id,
+                    attributes: window.CURRENT_LABEL.attributes || {}
+                });
+
+                const targetCanvas = window.segmentationCanvas || window.canvas;
+                targetCanvas.add(img);
+                targetCanvas.setActiveObject(img);
+                targetCanvas.renderAll();
+
+                if (window.updateLayerList) window.updateLayerList();
+                Swal.close();
+                saveState();
+                setTool(tools.SELECT);
+            });
+        } else {
+            throw new Error(data.message || "AI failed to find an object.");
+        }
+    } catch (error) {
+        console.error("SAM Error:", error);
+        Swal.fire('Error', error.message || 'AI Model failed.', 'error');
+    }
+}
